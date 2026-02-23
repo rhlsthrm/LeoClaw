@@ -1,21 +1,23 @@
 # LeoClaw
 
-A minimal Telegram-to-Claude Code bridge. ~400 lines of harness code that turns a Mac mini into a personal AI agent you talk to through Telegram.
+A self-extending agent harness built on Claude Code. ~400 lines of plumbing that turns a Mac mini into a personal AI agent you talk to through Telegram.
+
+Think [OpenClaw](https://github.com/nichochar/open-claw) but leaner: no SDK, no API costs, no framework. Just Claude Code as the runtime and Telegram as the interface.
 
 ## What is this?
 
-LeoClaw spawns [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as a child process for every message. Grammy receives Telegram messages, builds context from reply chains, and runs `claude -p` with your workspace as the working directory. Claude uses MCP tools to reply directly to Telegram. That's it.
+LeoClaw spawns [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as a child process and lets it do everything. Grammy receives Telegram messages, resumes the right Claude conversation based on threads, and Claude uses MCP tools to reply directly. The harness is plumbing. Claude is the agent.
 
 No SDK. No API costs. No per-token billing. Just your Claude Max/Pro subscription and a Mac running 24/7.
 
 ## Why?
 
-Most AI agent frameworks add layers of abstraction on top of language models. LeoClaw goes the opposite direction: Claude Code already has a world-class agentic harness with tool calling, skills, MCP plugins, context compaction, and code-quality guarantees. Why rebuild any of that?
+Most AI agent frameworks rebuild tool calling, context management, and agentic loops from scratch on top of raw API completions. LeoClaw goes the opposite direction: Claude Code already has a world-class agentic harness with tool calling, skills, MCP plugins, context compaction, and code-quality guarantees. Why rebuild any of that?
 
 **Design goals:**
 
 - **Use Claude Code's built-in agentic harness.** Threading, tool calling, skills, compaction, plugins, coding quality. Don't reinvent what already works.
-- **Controllable context window.** Thread history is assembled per-invocation from reply chains, not accumulated in a growing session. You control exactly what context Claude sees.
+- **Controllable context window.** Claude resumes conversations based on Telegram threads. Context is managed by Claude Code's own compaction, not an ever-growing prompt. `/new` starts a fresh session when you want a clean slate.
 - **Telegram-only communication channel.** One interface, optimized for mobile. No web dashboard, no Slack, no Discord. Just Telegram.
 - **Mac mini as hardware.** Physically accessible, always-on, with macOS Keychain for secrets and launchd for process management. No cloud dependencies.
 - **Self-extending architecture.** The bot reads its own architecture docs and skill files. It knows how it's built and can add capabilities to itself.
@@ -29,9 +31,9 @@ Grammy Bot (src/index.ts)
     ↓ debounce rapid messages (3s window)
     ↓ voice? → ElevenLabs STT → text (optional)
     ↓ photo? → saved to workspace/tmp/
-    ↓ walk reply chain → thread context
+    ↓ build thread context from reply chain
     ↓ prepend [chat_id, message_id] metadata
-Claude Code (claude -p, stateless per invocation)
+Claude Code (claude -p --continue, resumes conversation)
     ↓ loads workspace/CLAUDE.md + .mcp.json
     ↓ uses MCP tools to reply
 Telegram MCP Server
@@ -39,10 +41,7 @@ Telegram MCP Server
 Telegram User
 ```
 
-Every invocation is stateless. Context comes from:
-1. **Reply chains** — if the user replies to a message, the harness walks the chain from `messages.json`
-2. **Recent history** — if not a reply, the last 20 messages are included
-3. **Workspace files** — `CLAUDE.md` (identity), `ARCHITECTURE.md` (self-knowledge), skills, etc.
+Conversations persist via Claude Code's `--continue` flag. Claude manages its own context window with built-in compaction. Thread context from reply chains is prepended to each prompt so Claude understands the Telegram conversation structure. `/new` starts a fresh session.
 
 ## Quick Start
 
@@ -181,9 +180,9 @@ Telegram commands:
 
 ### Thread Context
 
-The harness maintains a message store (`messages.json`, 100 messages per chat). When a user replies to a message, it walks the reply chain to build thread context. When not replying, it includes recent history.
+Claude resumes conversations using `--continue`, so it has full memory of prior messages in the session. The harness also maintains a message store (`messages.json`) and walks Telegram reply chains to build thread context. This context is prepended to each prompt so Claude understands which message you're replying to and the conversation flow.
 
-This gives you controllable context without growing sessions. Each Claude invocation is stateless but contextual.
+`/new` starts a fresh Claude session when you want a clean context window.
 
 ### Voice Notes
 
@@ -240,8 +239,8 @@ Claude Code gives you tool calling, skills, MCP plugins, context compaction, cod
 **Why Telegram?**
 It's fast, mobile-first, supports rich media, has a good bot API, and reply threading maps naturally to conversation context. One channel, optimized well.
 
-**Why stateless per invocation?**
-Controllable context. You decide what the bot sees via reply chains and workspace files, not via an ever-growing conversation that eventually gets confused. Every invocation is clean.
+**How does context work?**
+Claude resumes conversations via `--continue`, so it has full memory within a session. Claude Code's built-in compaction handles context limits automatically. Reply chains from Telegram provide conversation structure. `/new` gives you a fresh session when context gets stale.
 
 **Why Mac mini?**
 Physical access means you can use Keychain for secrets, launchd for service management, and local tools (browsers, file system, etc.) that cloud VMs can't easily provide. The bot can ask you to physically intervene when needed.

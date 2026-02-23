@@ -1,7 +1,7 @@
 {
   "name": "leoclaw",
   "version": "1.0.0",
-  "description": "Minimal Telegram bridge to Claude Code. No SDK, no API costs.",
+  "description": "Self-extending agent harness built on Claude Code. Telegram interface, Mac mini runtime.",
   "type": "module",
   "scripts": {
     "build": "pnpm -r build && tsc",

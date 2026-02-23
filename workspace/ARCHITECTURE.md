@@ -17,7 +17,7 @@ Grammy Bot (src/index.ts)
     ↓ photo? → saved to workspace/tmp/ → path in prompt
     ↓ reply? → walk reply chain from messages.json → thread context
     ↓ prepends [chat_id, message_id] + <thread_context>
-Claude Code (claude -p, stateless)
+Claude Code (claude -p --continue, resumes conversation)
     ↓ reads .mcp.json, CLAUDE.md, workspace files
     ↓ uses MCP tools to reply
 Telegram MCP Server (packages/telegram-mcp/)
@@ -56,10 +56,12 @@ workspace/
 5. If message is a reply: walks the reply chain from messages.json to assemble thread context
 6. If not a reply: includes recent conversation history as context
 7. Builds prompt: `[chat_id, message_id]` + `<thread_context>` + current message
-8. Spawns `claude -p "<prompt>" --output-format text` (stateless)
-9. Claude Code loads CLAUDE.md + .mcp.json automatically
-10. Claude uses Telegram MCP tools (send_message, etc.) to reply directly
-11. If Claude doesn't use MCP tools, harness sends stdout as fallback
+8. Spawns `claude -p --continue "<prompt>" --output-format text` (resumes conversation)
+9. Claude Code manages its own context window with built-in compaction
+10. Claude Code loads CLAUDE.md + .mcp.json automatically
+11. Claude uses Telegram MCP tools (send_message, etc.) to reply directly
+12. If Claude doesn't use MCP tools, harness sends stdout as fallback
+13. `/new` command starts a fresh session (no `--continue`)
 
 ### Message Debouncing
 Rapid messages (within 3 seconds) are batched into a single Claude invocation.
