@@ -4,6 +4,8 @@
 
 A self-extending agent harness built on Claude Code. ~400 lines of plumbing that turns a Mac mini into a personal AI agent you talk to through Telegram.
 
+Named after my dog Leo, my best pal in the world. When I talk to my bot, it feels like talking to my furry bud who's eternally patient and helpful with me. That's the vibe I wanted.
+
 Think [OpenClaw](https://github.com/nichochar/open-claw) but leaner: no SDK, no API costs, no framework. Just Claude Code as the runtime and Telegram as the interface.
 
 ## What is this?
@@ -13,6 +15,15 @@ LeoClaw spawns [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as 
 No SDK. No API costs. No per-token billing. Just your Claude Max/Pro subscription and a Mac running 24/7.
 
 ## Why?
+
+| | OpenClaw | NanoClaw | **LeoClaw** |
+|---|---------|----------|-------------|
+| Lines of code | 400K+ | ~5K | ~400 |
+| Dependencies | 45+ | 20+ | 3 |
+| Runtime | Custom agent + API | Agent SDK + containers | `claude` CLI |
+| Cost | Per-token API | Per-token API / subscription | Max subscription |
+| Skills | Custom format | Custom format | Claude Code native |
+| Memory | Custom system | Per-group files | Claude Code native (auto-compaction) |
 
 Most AI agent frameworks rebuild tool calling, context management, and agentic loops from scratch on top of raw API completions. LeoClaw goes the opposite direction: Claude Code already has a world-class agentic harness with tool calling, skills, MCP plugins, context compaction, and code-quality guarantees. Why rebuild any of that?
 
@@ -26,24 +37,18 @@ Most AI agent frameworks rebuild tool calling, context management, and agentic l
 
 ## Architecture
 
-```
-Telegram User
-    ↓ message (text, voice, photo)
-Grammy Bot (src/index.ts)
-    ↓ debounce rapid messages (3s window)
-    ↓ voice? → ElevenLabs STT → text (optional)
-    ↓ photo? → saved to workspace/tmp/
-    ↓ build thread context from reply chain
-    ↓ prepend [chat_id, message_id] metadata
-Claude Code (claude -p --continue, resumes conversation)
-    ↓ loads workspace/CLAUDE.md + .mcp.json
-    ↓ uses MCP tools to reply
-Telegram MCP Server
-    ↓ send_message, send_photo, edit, delete, react, typing, ask_user
-Telegram User
+```mermaid
+flowchart LR
+    T[Telegram] -->|reply to msg| C1["claude -p --continue"]
+    T -->|new msg| C2["claude -p"]
+    CR[Cron] --> C2
+    C1 -->|MCP tools| T
+    C2 -->|MCP tools| T
 ```
 
-Reply to a message and Claude continues that conversation via `--continue`. Don't reply and it starts a fresh session. Telegram's reply threading becomes your context control. You'll rarely hit compaction because each conversation thread stays focused.
+Reply to a message = continue the conversation in the same Claude Code session. Don't reply = fresh session. That's it. Telegram's reply threading becomes your context control. You'll rarely hit compaction because each thread stays focused.
+
+The outer loop is dumb plumbing. All intelligence lives in Claude Code via `CLAUDE.md`, `.claude/skills/`, and your workspace files. Zero agent infrastructure to maintain.
 
 ## Quick Start
 
@@ -193,6 +198,8 @@ memory/
 - **Self-evolving.** When a topic outgrows existing pillars, the bot proposes a new one. The pillar count isn't fixed.
 - **Nightly synthesis.** A cron job deduplicates, prunes stale info, and re-indexes.
 
+**Customizable.** The default five pillars are just a starting point. Tell your bot to add, rename, merge, or remove pillars and it'll restructure on the fly. Want a "travel" pillar? A "reading-list" pillar? Just ask.
+
 The full spec lives in `workspace/.claude/skills/memory/SKILL.md`. Fork it, adapt the pillars to your life, and your bot remembers everything.
 
 ### Crons
@@ -288,6 +295,10 @@ Physical access means you can use Keychain for secrets, launchd for service mana
 
 **Can I run this on Linux?**
 The harness itself is platform-agnostic. You'd replace Keychain with env vars or a different secret manager, and launchd with systemd. Everything else works as-is.
+
+## Disclaimer
+
+I built this for myself because I wanted more control over my OpenClaw system. It works great for my setup, but it's a personal project first. If you hit bugs, sorry! PRs and issues are welcome.
 
 ## License
 
