@@ -191,6 +191,16 @@ memory/
 1. **Read flow** — Classify the topic, read 0-2 relevant pillar files (they're tiny), follow links to detail files if deeper context is needed. No memory lookup for simple tasks.
 2. **Write flow** — New fact learned? Update the pillar file immediately. Append to the daily buffer as an audit log. Decisions go to `decisions.md`, open items to `open-loops.md`.
 
+**Three-tier retrieval when searching:**
+
+| Tier | Tool | When |
+|------|------|------|
+| 1 | Pillar files | ~90% of queries. Read 0-2 small index files directly. |
+| 2 | [QMD](https://github.com/qmdnote/qmd) search | Historical/temporal queries ("when did I last...", "what did we decide about..."). BM25 + vector search across daily buffer files. |
+| 3 | Telegram chat search | Last resort. Searches the full chat history when memory files come up empty. |
+
+Most queries never leave Tier 1. QMD handles the "I know we discussed this" cases with local BM25 and vector search over the buffer logs. Telegram search is the nuclear option for when nothing else finds it.
+
 **Key design choices:**
 - **Pillar files are the source of truth.** Small, structured, fast to read. Detail files hold overflow.
 - **Progressive disclosure.** Claude reads a 500-byte index file, not a 50KB brain dump. Detail files are only loaded when needed.
