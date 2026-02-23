@@ -1,3 +1,5 @@
+![2026-02-23 16 52 42](https://github.com/user-attachments/assets/d4b9f784-a231-4739-a40c-adfdb113fc40)
+
 # LeoClaw
 
 A self-extending agent harness built on Claude Code. ~400 lines of plumbing that turns a Mac mini into a personal AI agent you talk to through Telegram.
