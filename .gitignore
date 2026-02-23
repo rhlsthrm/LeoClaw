@@ -1,0 +1,14 @@
+node_modules/
+dist/
+config.json
+messages.json
+packages/*/node_modules
+packages/*/dist
+workspace/secrets/
+workspace/memory/
+workspace/tmp/
+workspace/crons/*
+!workspace/crons/example.md
+logs/
+*.db
+.DS_Store

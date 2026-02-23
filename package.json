@@ -1,0 +1,23 @@
+{
+  "name": "leoclaw",
+  "version": "1.0.0",
+  "description": "Minimal Telegram bridge to Claude Code. No SDK, no API costs.",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build && tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "start:keychain": "bash scripts/run-leo-with-keychain.sh",
+    "setup:hooks": "bash scripts/setup-git-hooks.sh"
+  },
+  "dependencies": {
+    "croner": "^10.0.1",
+    "grammy": "^1.31.0",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

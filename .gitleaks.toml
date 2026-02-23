@@ -1,0 +1,14 @@
+title = "LeoClaw gitleaks config"
+
+[allowlist]
+description = "Allow placeholders and generated artifacts"
+paths = [
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/'''
+]
+regexes = [
+  '''YOUR_[A-Z0-9_]+''',
+  '''your-[a-z0-9-]+''',
+  '''\[redacted\]'''
+]

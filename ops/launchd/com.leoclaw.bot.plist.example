@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.leoclaw.bot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>/Users/YOUR_USER/leoclaw/scripts/run-leo-with-keychain.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOUR_USER/leoclaw</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LEO_ALLOWED_USERS</key>
+    <string>YOUR_TELEGRAM_USER_ID</string>
+    <key>LEO_WORKSPACE</key>
+    <string>/Users/YOUR_USER/leoclaw/workspace</string>
+    <key>LEO_CLAUDE_PATH</key>
+    <string>/opt/homebrew/bin/claude</string>
+    <key>LEO_KEYCHAIN_SERVICE</key>
+    <string>leoclaw.telegram_bot_token</string>
+    <key>LEO_KEYCHAIN_ACCOUNT</key>
+    <string>YOUR_USER</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOUR_USER/leoclaw/logs/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOUR_USER/leoclaw/logs/stderr.log</string>
+</dict>
+</plist>

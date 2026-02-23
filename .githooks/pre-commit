@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKIP_GITLEAKS:-0}" == "1" ]]; then
+  echo "Skipping gitleaks scan (SKIP_GITLEAKS=1)."
+  exit 0
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks is required for pre-commit scanning."
+  echo "Install with: brew install gitleaks"
+  exit 1
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+gitleaks detect --no-git --source . --config .gitleaks.toml --redact
