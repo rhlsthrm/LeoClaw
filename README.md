@@ -170,6 +170,33 @@ Example uses: memory management, cron scheduling, API integrations, content pipe
 
 LeoClaw ships with a pillar-based memory architecture that gives your bot persistent, structured memory across conversations. It's implemented entirely as a skill file and workspace conventions. No database, no vector store required.
 
+```mermaid
+flowchart TD
+    MSG[Incoming Message] --> CLS{Needs context?}
+    CLS -->|no| SKIP[Reply directly]
+    CLS -->|yes| T1
+
+    T1["Tier 1: Pillar Files\nRead 0-2 index files + detail/"]
+    T1 -->|"hit ≈90%"| REPLY
+    T1 -->|miss| T2
+
+    T2["Tier 2: QMD Search\nBM25 + vector over buffer logs"]
+    T2 -->|hit| REPLY
+    T2 -->|miss| T3
+
+    T3["Tier 3: Telegram Search\nFull chat history"]
+    T3 --> REPLY
+
+    REPLY["Reply + Memory Footer\n📚 Read: health · Wrote: health"]
+
+    MSG -->|new fact| WRITE[Update pillar + append buffer]
+    MSG -->|decision| DEC[decisions.md]
+    MSG -->|open loop| OL[open-loops.md]
+
+    NIGHT["Nightly: dedupe, prune, re-index QMD"]
+    WRITE -.-> NIGHT
+```
+
 **How it works:**
 
 ```
