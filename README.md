@@ -6,24 +6,24 @@ A self-extending agent harness built on Claude Code. ~400 lines of plumbing that
 
 Named after my dog Leo, my best pal in the world. When I talk to my bot, it feels like talking to my furry bud who's eternally patient and helpful with me. That's the vibe I wanted.
 
-Think [OpenClaw](https://github.com/nichochar/open-claw) but leaner: no SDK, no API costs, no framework. Just Claude Code as the runtime and Telegram as the interface.
+Think [OpenClaw](https://github.com/nichochar/open-claw) but leaner: no SDK, no per-token billing, no framework. Just Claude Code as the runtime and Telegram as the interface.
 
 ## What is this?
 
 LeoClaw spawns [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as a child process and lets it do everything. Grammy receives Telegram messages, resumes the right Claude conversation based on threads, and Claude uses MCP tools to reply directly. The harness is plumbing. Claude is the agent.
 
-No SDK. No API costs. No per-token billing. Just your Claude Max/Pro subscription and a Mac running 24/7.
+No SDK. No per-token billing. Flat-rate via your existing Claude Max/Pro subscription and a Mac running 24/7.
 
 ## Why?
 
 | | OpenClaw | NanoClaw | **LeoClaw** |
 |---|---------|----------|-------------|
-| Lines of code | 400K+ | ~5K | ~400 |
-| Dependencies | 45+ | 20+ | 3 |
+| Lines of code | Large | ~5K | ~400 |
+| Dependencies | Many | 20+ | 3 |
 | Runtime | Custom agent + API | Agent SDK + containers | `claude` CLI |
-| Cost | Per-token API | Per-token API / subscription | Max subscription |
+| Cost | Per-token API | Per-token API / subscription | Max subscription (flat-rate) |
 | Skills | Custom format | Custom format | Claude Code native |
-| Memory | Custom system | Per-group files | Claude Code native (auto-compaction) |
+| Memory | Custom system | Per-group files | Pillar-based (included) |
 
 Most AI agent frameworks rebuild tool calling, context management, and agentic loops from scratch on top of raw API completions. LeoClaw goes the opposite direction: Claude Code already has a world-class agentic harness with tool calling, skills, MCP plugins, context compaction, and code-quality guarantees. Why rebuild any of that?
 
@@ -162,9 +162,30 @@ The `workspace/` directory is where all the intelligence lives. The harness code
 
 ### Skills
 
-Skills are markdown files that teach Claude how to perform specific tasks. Drop a `SKILL.md` file in `.claude/skills/<name>/` and Claude auto-discovers it.
+Skills are markdown files that teach Claude how to perform specific tasks. No code to compile, no plugins to register. Drop a `SKILL.md` file in `.claude/skills/<name>/` and Claude auto-discovers it.
 
-Example uses: memory management, cron scheduling, API integrations, content pipelines, code generation patterns.
+```
+workspace/.claude/skills/
+├── memory/           # Pillar-based memory system (included)
+├── cron/             # Cron management instructions (included)
+├── morning-briefing/ # Daily news digest
+├── summarize/        # URL/podcast transcription
+├── grok-search/      # Web + X/Twitter search via Grok
+└── ...               # Drop in your own
+```
+
+**Installing skills:**
+
+```bash
+# From skills.sh marketplace or any Claude Code skills registry
+npx @anthropic-ai/claude-code skills install <skill-name>
+
+# Or manually: drop a SKILL.md into a new folder
+mkdir -p workspace/.claude/skills/my-skill
+# Write a SKILL.md with instructions for the capability
+```
+
+Want a skill that generates images? Monitors prices? Drafts tweets? Write a SKILL.md describing how, point it at the right APIs, and it works. The bot can also install skills on itself. Ask it to learn something new and it'll create the skill file.
 
 ### Memory System
 
