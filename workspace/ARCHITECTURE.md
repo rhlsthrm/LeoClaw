@@ -53,15 +53,14 @@ workspace/
 2. Voice notes: downloaded from Telegram, transcribed via ElevenLabs Scribe v2, treated as text
 3. Photos: downloaded, saved to workspace/tmp/, file path included in prompt
 4. Message stored in `messages.json` with chatId, messageId, replyTo, text, from (user/bot)
-5. If message is a reply: walks the reply chain from messages.json to assemble thread context
-6. If not a reply: includes recent conversation history as context
+5. If message is a reply: walks the reply chain from messages.json to assemble thread context, spawns `claude -p --continue` (resumes the existing conversation)
+6. If message is NOT a reply: starts a fresh Claude session (no `--continue`)
 7. Builds prompt: `[chat_id, message_id]` + `<thread_context>` + current message
-8. Spawns `claude -p --continue "<prompt>" --output-format text` (resumes conversation)
-9. Claude Code manages its own context window with built-in compaction
-10. Claude Code loads CLAUDE.md + .mcp.json automatically
-11. Claude uses Telegram MCP tools (send_message, etc.) to reply directly
-12. If Claude doesn't use MCP tools, harness sends stdout as fallback
-13. `/new` command starts a fresh session (no `--continue`)
+8. Claude Code loads CLAUDE.md + .mcp.json automatically
+9. Claude uses Telegram MCP tools (send_message, etc.) to reply directly
+10. If Claude doesn't use MCP tools, harness sends stdout as fallback
+
+**Context control is just Telegram replies.** Reply to keep a thread going. Send a new message for a clean slate. Because threads stay topic-focused, you rarely hit compaction limits.
 
 ### Message Debouncing
 Rapid messages (within 3 seconds) are batched into a single Claude invocation.

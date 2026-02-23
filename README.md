@@ -19,7 +19,7 @@ Most AI agent frameworks rebuild tool calling, context management, and agentic l
 **Design goals:**
 
 - **Use Claude Code's built-in agentic harness.** Threading, tool calling, skills, compaction, plugins, coding quality. Don't reinvent what already works.
-- **Controllable context window.** Claude resumes conversations based on Telegram threads. Context is managed by Claude Code's own compaction, not an ever-growing prompt. `/new` starts a fresh session when you want a clean slate.
+- **Controllable context window.** Reply to a message and Claude continues that conversation. Send a new message and it starts fresh. No session management, no growing prompts. You naturally control context just by how you use Telegram.
 - **Telegram-only communication channel.** One interface, optimized for mobile. No web dashboard, no Slack, no Discord. Just Telegram.
 - **Mac mini as hardware.** Physically accessible, always-on, with macOS Keychain for secrets and launchd for process management. No cloud dependencies.
 - **Self-extending architecture.** The bot reads its own architecture docs and skill files. It knows how it's built and can add capabilities to itself.
@@ -43,7 +43,7 @@ Telegram MCP Server
 Telegram User
 ```
 
-Conversations persist via Claude Code's `--continue` flag. Claude manages its own context window with built-in compaction. Thread context from reply chains is prepended to each prompt so Claude understands the Telegram conversation structure. `/new` starts a fresh session.
+Reply to a message and Claude continues that conversation via `--continue`. Don't reply and it starts a fresh session. Telegram's reply threading becomes your context control. You'll rarely hit compaction because each conversation thread stays focused.
 
 ## Quick Start
 
@@ -161,6 +161,40 @@ Skills are markdown files that teach Claude how to perform specific tasks. Drop 
 
 Example uses: memory management, cron scheduling, API integrations, content pipelines, code generation patterns.
 
+### Memory System
+
+LeoClaw ships with a pillar-based memory architecture that gives your bot persistent, structured memory across conversations. It's implemented entirely as a skill file and workspace conventions. No database, no vector store required.
+
+**How it works:**
+
+```
+memory/
+  pillars/           # 5 compact index files (~500B-1.5KB each)
+    health.md        # Sleep, fitness, medical
+    finance.md       # Portfolio, investments
+    work.md          # Role, projects, team
+    projects.md      # Side projects, tools
+    family.md        # People, relationships
+  detail/            # Overflow when a pillar grows too large
+  buffer/            # Daily append-only audit logs (YYYY-MM-DD.md)
+  decisions.md       # Cross-cutting decision log
+  open-loops.md      # Active items needing follow-up
+```
+
+**Every message, the bot runs two flows:**
+
+1. **Read flow** — Classify the topic, read 0-2 relevant pillar files (they're tiny), follow links to detail files if deeper context is needed. No memory lookup for simple tasks.
+2. **Write flow** — New fact learned? Update the pillar file immediately. Append to the daily buffer as an audit log. Decisions go to `decisions.md`, open items to `open-loops.md`.
+
+**Key design choices:**
+- **Pillar files are the source of truth.** Small, structured, fast to read. Detail files hold overflow.
+- **Progressive disclosure.** Claude reads a 500-byte index file, not a 50KB brain dump. Detail files are only loaded when needed.
+- **Transparent retrieval.** Every message ends with a footer showing what memory was read and written: `📚 Read: health, finance/portfolio · Wrote: health (sleep -> 7.5h avg)`
+- **Self-evolving.** When a topic outgrows existing pillars, the bot proposes a new one. The pillar count isn't fixed.
+- **Nightly synthesis.** A cron job deduplicates, prunes stale info, and re-indexes.
+
+The full spec lives in `workspace/.claude/skills/memory/SKILL.md`. Fork it, adapt the pillars to your life, and your bot remembers everything.
+
 ### Crons
 
 Scheduled tasks defined as markdown files in `workspace/crons/`. Each file has YAML frontmatter (schedule, timezone, chat_id) and a prompt body.
@@ -180,11 +214,16 @@ Telegram commands:
 - `/crons` — list all jobs and their next run times
 - `/reload_crons` — reload after editing cron files
 
-### Thread Context
+### Conversations
 
-Claude resumes conversations using `--continue`, so it has full memory of prior messages in the session. The harness also maintains a message store (`messages.json`) and walks Telegram reply chains to build thread context. This context is prepended to each prompt so Claude understands which message you're replying to and the conversation flow.
+Context management maps directly to Telegram's UI:
 
-`/new` starts a fresh Claude session when you want a clean context window.
+- **Reply to a bot message** → continues the existing Claude session (`--continue`). Full memory of everything said in that thread.
+- **Send a new message (no reply)** → starts a fresh Claude session. Clean slate.
+
+That's it. No `/new` command needed, no session tokens, no explicit context management. The way you naturally use Telegram replies becomes your context control. Because threads stay focused on one topic, you'll rarely hit Claude Code's compaction limits.
+
+The harness also walks Telegram reply chains to build thread context, so Claude understands the conversation structure even within a continued session.
 
 ### Voice Notes
 
@@ -242,7 +281,7 @@ Claude Code gives you tool calling, skills, MCP plugins, context compaction, cod
 It's fast, mobile-first, supports rich media, has a good bot API, and reply threading maps naturally to conversation context. One channel, optimized well.
 
 **How does context work?**
-Claude resumes conversations via `--continue`, so it has full memory within a session. Claude Code's built-in compaction handles context limits automatically. Reply chains from Telegram provide conversation structure. `/new` gives you a fresh session when context gets stale.
+Reply to a bot message and it continues the conversation. Send a new message (no reply) and it starts fresh. Telegram's reply threading is the entire context management system. Because threads stay focused, you rarely hit compaction limits.
 
 **Why Mac mini?**
 Physical access means you can use Keychain for secrets, launchd for service management, and local tools (browsers, file system, etc.) that cloud VMs can't easily provide. The bot can ask you to physically intervene when needed.
