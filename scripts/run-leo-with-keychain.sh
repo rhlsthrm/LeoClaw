@@ -16,5 +16,7 @@ if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   exit 1
 fi
 
+export AGENT_BROWSER_PROFILE="$ROOT_DIR/workspace/secrets/browser-profile"
+
 cd "$ROOT_DIR"
 exec node dist/index.js

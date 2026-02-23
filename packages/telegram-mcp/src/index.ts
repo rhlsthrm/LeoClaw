@@ -7,7 +7,7 @@
  *
  * Env: TELEGRAM_BOT_TOKEN (required)
  *
- * Tools: send_message, send_photo, edit_message, delete_message, react, typing, ask_user
+ * Tools: send_message, send_photo, edit_message, delete_message, react, typing
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -155,7 +155,7 @@ server.tool(
     if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
     const result = await tg("sendMessage", body);
 
-    // Log to outbox so harness can track bot messages
+    // Log to outbox so harness can track Leo's messages
     try {
       mkdirSync(IPC_DIR, { recursive: true });
       const sentMsg = result as { message_id: number };

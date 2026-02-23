@@ -1,27 +1,31 @@
 # @leoclaw/telegram-mcp
 
-Minimal MCP server that exposes Telegram Bot API actions as tools for Claude Code.
+Minimal Telegram MCP server for Claude Code. Lets Claude talk to users directly via Telegram Bot API instead of returning stdout.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `send_message` | Send text (HTML formatting) |
-| `send_photo` | Send photo (URL, file_id, or local path) |
+| `send_message` | Send text with Markdown formatting |
+| `send_photo` | Send photo by URL or file_id |
 | `edit_message` | Edit an existing message |
 | `delete_message` | Delete a message |
 | `react` | Add emoji reaction |
 | `typing` | Show typing indicator |
-| `ask_user` | Ask user a question and wait for reply (IPC-based) |
 
 ## Setup
 
-```bash
-pnpm install
-pnpm build
+Add to `.mcp.json` in your workspace:
+
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "node",
+      "args": ["../packages/telegram-mcp/dist/index.js"]
+    }
+  }
+}
 ```
 
-## Environment
-
-- `TELEGRAM_BOT_TOKEN` (required) — Your bot token from @BotFather
-- `LEO_IPC_DIR` (optional) — IPC directory for ask_user (default: `/tmp/leo-ipc`)
+Set `TELEGRAM_BOT_TOKEN` in your shell or service environment before launching Claude Code.

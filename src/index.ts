@@ -11,7 +11,7 @@
 
 import { Bot, BotError, Context } from "grammy";
 import { spawn, ChildProcess, execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,7 @@ interface StoredMessage {
   messageId: number;
   chatId: string;
   text: string;
-  from: "user" | "bot";
+  from: "user" | "leo";
   replyTo?: number;
   timestamp: number;
 }
@@ -102,7 +102,9 @@ function loadMessageStore(): Map<string, StoredMessage[]> {
 function saveMessageStore(store: Map<string, StoredMessage[]>): void {
   const obj: Record<string, StoredMessage[]> = {};
   for (const [k, v] of store) obj[k] = v;
-  writeFileSync(MSG_STORE_FILE, JSON.stringify(obj));
+  const tmp = MSG_STORE_FILE + ".tmp";
+  writeFileSync(tmp, JSON.stringify(obj));
+  renameSync(tmp, MSG_STORE_FILE);
 }
 
 const messageStore = loadMessageStore();
@@ -140,7 +142,7 @@ function formatThreadContext(chain: StoredMessage[], currentMsgId: number): stri
   if (!history.length) return "";
 
   const lines = history.map((m) => {
-    const role = m.from === "user" ? "User" : "Bot";
+    const role = m.from === "user" ? "User" : "Leo";
     return `[${role}]: ${m.text}`;
   });
 
@@ -173,7 +175,7 @@ function ingestOutbox(chatId: string): void {
           messageId: entry.message_id,
           chatId: entry.chat_id,
           text: entry.text,
-          from: "bot",
+          from: "leo",
           replyTo: entry.reply_to_message_id,
           timestamp: entry.timestamp,
         });
@@ -187,8 +189,8 @@ function ingestOutbox(chatId: string): void {
   }
 }
 
-// --- Voice Transcription (optional, requires ELEVENLABS_API_KEY) ---
-function getElevenLabsKey(): string | null {
+// --- ElevenLabs STT ---
+function getElevenLabsKey(): string {
   const envKey = process.env.ELEVENLABS_API_KEY;
   if (envKey) return envKey;
   try {
@@ -196,13 +198,12 @@ function getElevenLabsKey(): string | null {
       encoding: "utf-8",
     }).trim();
   } catch {
-    return null;
+    throw new Error("ELEVENLABS_API_KEY not found in env or Keychain");
   }
 }
 
 async function transcribeVoice(fileUrl: string): Promise<string> {
   const apiKey = getElevenLabsKey();
-  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not found in env or Keychain. Set it to enable voice transcription.");
 
   // Download the voice file from Telegram
   const response = await fetch(fileUrl);
@@ -280,7 +281,7 @@ bot.use(async (ctx, next) => {
         messageId: reply.message_id,
         chatId,
         text: reply.text,
-        from: "bot",
+        from: "leo",
         replyTo: (reply as any).reply_to_message?.message_id as number | undefined,
         timestamp: (reply.date ?? 0) * 1000,
       });
@@ -462,12 +463,12 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
         const sentMsg = await bot.api.sendMessage(chatId, response.slice(0, MAX_MSG_LEN), {
           reply_to_message_id: lastMsg.messageId,
         });
-        // Store bot's reply
+        // Store Leo's reply
         storeMessage({
           messageId: sentMsg.message_id,
           chatId,
           text: response,
-          from: "bot",
+          from: "leo",
           replyTo: lastMsg.messageId,
           timestamp: Date.now(),
         });
@@ -561,7 +562,7 @@ async function sendToChat(chatId: string, text: string): Promise<void> {
 const cronModule = createCronModule(join(WORKSPACE, "crons"), runClaude, sendToChat);
 
 // --- Start ---
-console.log("LeoClaw starting...");
+console.log("Leo starting...");
 console.log(`Workspace: ${WORKSPACE}`);
 console.log(`Allowed users: ${[...ALLOWED_USERS].join(", ")}`);
 console.log(
@@ -570,10 +571,24 @@ console.log(
 
 cronModule.start();
 
+// Graceful shutdown: abort active Claude processes, stop bot
+function shutdown(signal: string): void {
+  console.log(`\n[${signal}] Shutting down...`);
+  for (const [chatId, controller] of activeRuns) {
+    console.log(`[shutdown] aborting run for ${chatId}`);
+    controller.abort();
+  }
+  activeRuns.clear();
+  bot.stop();
+  process.exit(0);
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
 bot.catch((err: BotError<Context>) => {
   console.error("[bot error]", err.message);
 });
 bot.start({
-  onStart: () => console.log("LeoClaw is running. 🦁"),
+  onStart: () => console.log("Leo is running. 🦁"),
   allowed_updates: ["message"],
 });

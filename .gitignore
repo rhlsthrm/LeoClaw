@@ -1,7 +1,6 @@
 node_modules/
 dist/
 config.json
-messages.json
 packages/*/node_modules
 packages/*/dist
 workspace/secrets/
@@ -11,4 +10,7 @@ workspace/crons/*
 !workspace/crons/example.md
 logs/
 *.db
+messages.json
+__pycache__/
+venv/
 .DS_Store
