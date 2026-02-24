@@ -8,14 +8,14 @@ Named after my dog Leo, my best pal in the world. When I talk to my bot, it feel
 
 ```mermaid
 flowchart LR
-    T[Telegram] -->|reply to msg| C1["claude -p --continue"]
-    T -->|new msg| C2["claude -p"]
+    T[Telegram] -->|reply to msg| C1["claude -p (with reply chain)"]
+    T -->|new msg| C2["claude -p (no context)"]
     CR[Cron] --> C2
     C1 -->|MCP tools| T
     C2 -->|MCP tools| T
 ```
 
-Reply to a message = continue the conversation in the same Claude Code session. Don't reply = fresh session. That's it. No commands needed.
+Reply to a message = Claude gets the reply chain as context. Don't reply = clean slate. That's it. No commands needed. Each invocation is stateless.
 
 The outer loop is dumb plumbing. All intelligence lives in Claude Code via `CLAUDE.md`, `.claude/skills/`, and your workspace files. Zero agent infrastructure to maintain.
 
@@ -99,8 +99,8 @@ CI scanning is enabled via `.github/workflows/secret-scan.yml` using `.gitleaks.
 
 ## Commands
 
-- **Any text** — sent to Claude Code with `--continue` (persistent session)
-- `/new` — start a fresh session
+- **Any text** — sent to Claude Code (stateless invocation)
+- **Reply to a message** — walks the reply chain for thread context
 - `/stop` — kill the running Claude process
 
 ## Workspace Structure
@@ -130,10 +130,10 @@ Pull glue code updates from upstream. Your personal stuff never leaves the priva
 
 ## How It Works
 
-1. **Messages**: Telegram text → spawns `claude -p "message" --continue` → streams stdout back to Telegram
-2. **Memory**: Claude Code's native session persistence + auto-compaction handles context
-3. **Skills**: Standard `.claude/skills/` directory — Claude Code reads them automatically
-4. **Crons**: Simple cron scheduler spawns `claude -p "prompt"` (fresh session) and sends output to Telegram
+1. **Messages**: Telegram text → spawns `claude -p "prompt"` (stateless). Reply chains provide thread context. No reply = clean slate.
+2. **Memory**: Pillar-based system in `workspace/memory/`. Three-tier retrieval (pillar files → QMD search → Telegram search). Nightly synthesis cron keeps it clean.
+3. **Skills**: Standard `.claude/skills/` directory. Claude Code reads them automatically.
+4. **Crons**: Markdown-based scheduler spawns `claude -p "prompt"` (fresh session). Silent crons suppress stdout fallback to Telegram.
 
 By default, LeoClaw does not pass `--dangerously-skip-permissions`. Set `dangerouslySkipPermissions: true` only if you explicitly need unattended operation (e.g. crons that run shell commands). When enabled, Claude gets unrestricted shell access. Run this on dedicated/isolated hardware, not your daily driver.
 

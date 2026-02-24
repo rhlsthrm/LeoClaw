@@ -142,16 +142,11 @@ function formatThreadContext(chain: StoredMessage[], currentMsgId: number): stri
   if (!history.length) return "";
 
   const lines = history.map((m) => {
-    const role = m.from === "user" ? "User" : "Leo";
+    const role = m.from === "user" ? "Rahul" : "Leo";
     return `[${role}]: ${m.text}`;
   });
 
   return `<thread_context>\n${lines.join("\n\n")}\n</thread_context>\n\n`;
-}
-
-function getRecentMessages(chatId: string, limit = 20): StoredMessage[] {
-  const msgs = messageStore.get(chatId) ?? [];
-  return msgs.slice(-limit);
 }
 
 function ingestOutbox(chatId: string): void {
@@ -244,7 +239,7 @@ function deliverReply(chatId: string, text: string): void {
 
 // --- State ---
 const activeRuns = new Map<string, AbortController>();
-const messageQueue = new Map<string, { text: string; messageId: number; replyTo?: number }[]>();
+const messageQueue = new Map<string, { text: string; messageId?: number; replyTo?: number }[]>();
 const processing = new Set<string>();
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_MS = 3000;
@@ -289,10 +284,6 @@ bot.use(async (ctx, next) => {
   }
 
   await next();
-});
-
-bot.command("new", async (ctx) => {
-  await ctx.reply("Fresh session started. 🧹");
 });
 
 bot.command("stop", async (ctx) => {
@@ -428,6 +419,34 @@ bot.on("message:photo", async (ctx) => {
   }
 });
 
+bot.on("callback_query:data", async (ctx) => {
+  const rawChatId = ctx.chat?.id ?? ctx.callbackQuery.message?.chat.id;
+  if (!rawChatId) return;
+  const chatId = String(rawChatId);
+
+  const data = ctx.callbackQuery.data;
+  const originMessageId = ctx.callbackQuery.message?.message_id;
+
+  // Ack immediately so Telegram clears the button spinner
+  ctx.answerCallbackQuery().catch(() => {});
+
+  // Format as synthetic prompt (not stored in message store, callbacks are ephemeral)
+  const text = `[callback_query]\ncallback_data: ${data}\norigin_message_id: ${originMessageId ?? "unknown"}`;
+
+  // Skip debounce — buttons need fast response
+  if (!messageQueue.has(chatId)) messageQueue.set(chatId, []);
+  messageQueue.get(chatId)!.push({
+    text,
+    messageId: originMessageId,
+    replyTo: originMessageId,
+  });
+
+  // Process immediately if not already processing
+  if (!processing.has(chatId)) {
+    processQueue(chatId, ctx);
+  }
+});
+
 async function processQueue(chatId: string, ctx: Context): Promise<void> {
   processing.add(chatId);
 
@@ -436,11 +455,14 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
     const combined = messages.map((m) => m.text).join("\n\n");
     const lastMsg = messages[messages.length - 1];
 
-    // Thread context: explicit reply chain or recent conversation history
-    const chain = lastMsg.replyTo
-      ? walkReplyChain(chatId, lastMsg.messageId)
-      : getRecentMessages(chatId);
-    const threadContext = formatThreadContext(chain, lastMsg.messageId);
+    // Thread context: only from explicit reply chains
+    const lastMsgId = lastMsg.messageId;
+    const chain = lastMsg.replyTo && lastMsgId != null
+      ? walkReplyChain(chatId, lastMsgId)
+      : [];
+    const threadContext = lastMsgId != null
+      ? formatThreadContext(chain, lastMsgId)
+      : "";
 
     // Show typing indicator immediately and keep it alive every 4s
     bot.api.sendChatAction(chatId, "typing").catch(() => {});
@@ -476,7 +498,10 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
     } catch (err: any) {
       clearInterval(typingInterval);
       ingestOutbox(chatId);
-      if (err.name === "AbortError") return;
+      if (err.name === "AbortError") {
+        processing.delete(chatId);
+        return;
+      }
       console.error(`Error [${chatId}]:`, err.message);
       await ctx.reply(`Error: ${err.message.slice(0, 200)}`);
     }
@@ -559,7 +584,7 @@ async function sendToChat(chatId: string, text: string): Promise<void> {
 }
 
 // --- Cron Module ---
-const cronModule = createCronModule(join(WORKSPACE, "crons"), runClaude, sendToChat);
+const cronModule = createCronModule(join(WORKSPACE, "crons"), runClaude, sendToChat, ingestOutbox);
 
 // --- Start ---
 console.log("Leo starting...");
@@ -590,5 +615,5 @@ bot.catch((err: BotError<Context>) => {
 });
 bot.start({
   onStart: () => console.log("Leo is running. 🦁"),
-  allowed_updates: ["message"],
+  allowed_updates: ["message", "callback_query"],
 });

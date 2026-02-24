@@ -22,7 +22,7 @@ Key in-memory state in the harness: `activeRuns` (Map of AbortControllers), `mes
 
 - `src/index.ts` — The harness: Telegram bot, message queue, Claude process spawner
 - `src/cron.ts` — Cron module: parses markdown files, schedules with croner, serial execution queue
-- `packages/telegram-mcp/` — MCP server exposing 6 Telegram Bot API tools (send_message, send_photo, edit_message, delete_message, react, typing)
+- `packages/telegram-mcp/` — MCP server exposing 9 Telegram Bot API tools (send_message, send_photo, edit_message, delete_message, react, typing, edit_reply_markup, pin_message, ask_user)
 - `workspace/` — Claude's runtime workspace (CLAUDE.md identity, .mcp.json, skills, memory system, knowledge)
 - `workspace/crons/` — Cron job definitions (one `.md` file per job, YAML frontmatter + prompt)
 - `config.json` / `config.example.json` — Runtime config (env vars take precedence with `LEO_*` prefix)

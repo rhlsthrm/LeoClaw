@@ -22,6 +22,7 @@ interface CronJob {
   timezone: string;
   chatId: string;
   enabled: boolean;
+  silent: boolean;
   prompt: string;
   cronInstance: Cron | null;
   error?: string;
@@ -34,12 +35,15 @@ type RunClaudeFn = (
 
 type SendToChatFn = (chatId: string, text: string) => Promise<void>;
 
+type IngestOutboxFn = (chatId: string) => void;
+
 // --- Module ---
 
 export function createCronModule(
   cronsDir: string,
   runClaude: RunClaudeFn,
-  sendToChat: SendToChatFn
+  sendToChat: SendToChatFn,
+  ingestOutbox?: IngestOutboxFn,
 ) {
   let jobs: CronJob[] = [];
   const queue: CronJob[] = [];
@@ -59,13 +63,14 @@ export function createCronModule(
         timezone: "UTC",
         chatId: "",
         enabled: false,
+        silent: false,
         prompt: "",
         cronInstance: null,
         error: "Invalid YAML frontmatter",
       };
     }
 
-    const { schedule, timezone, chat_id, enabled } = parsed.data;
+    const { schedule, timezone, chat_id, enabled, silent } = parsed.data;
 
     if (!schedule || !chat_id) {
       return {
@@ -74,6 +79,7 @@ export function createCronModule(
         timezone: timezone || "UTC",
         chatId: chat_id || "",
         enabled: false,
+        silent: false,
         prompt: parsed.content.trim(),
         cronInstance: null,
         error: `Missing required field: ${!schedule ? "schedule" : "chat_id"}`,
@@ -86,6 +92,7 @@ export function createCronModule(
       timezone: timezone || "UTC",
       chatId: String(chat_id),
       enabled: enabled !== false,
+      silent: silent === true,
       prompt: parsed.content.trim(),
       cronInstance: null,
     };
@@ -110,15 +117,19 @@ export function createCronModule(
           `cron-${job.name}`,
           cronPrompt,
         );
-        if (response && !response.startsWith("[") && response.length > 5) {
+        ingestOutbox?.(job.chatId);
+        if (!job.silent && response && !response.startsWith("[") && response.length > 5) {
           await sendToChat(job.chatId, `🕐 *${job.name}*\n\n${response}`);
         }
       } catch (err: any) {
+        ingestOutbox?.(job.chatId);
         console.error(`[cron] "${job.name}" failed:`, err.message);
-        await sendToChat(
-          job.chatId,
-          `❌ Cron "${job.name}" failed: ${err.message.slice(0, 200)}`
-        );
+        if (!job.silent) {
+          await sendToChat(
+            job.chatId,
+            `❌ Cron "${job.name}" failed: ${err.message.slice(0, 200)}`
+          );
+        }
       }
     }
 
