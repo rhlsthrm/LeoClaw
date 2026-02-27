@@ -2,5 +2,7 @@
   "allowedUsers": ["YOUR_TELEGRAM_USER_ID"],
   "workspace": "./workspace",
   "claudePath": "claude",
-  "dangerouslySkipPermissions": false
+  "dangerouslySkipPermissions": false,
+  "model": "opus",
+  "fallbackModel": "sonnet"
 }

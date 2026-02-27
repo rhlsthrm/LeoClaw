@@ -28,6 +28,8 @@ const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 // --- Helpers ---
 
 type ParseMode = "HTML" | "MarkdownV2" | "Markdown";
+const MEMORY_FOOTER_MARKER = "📚";
+const DEFAULT_MEMORY_FOOTER = "📚 No memory used";
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
@@ -40,6 +42,128 @@ function isLocalFile(s: string): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function hasMemoryFooter(text: string): boolean {
+  const trimmed = text.trimEnd();
+  if (!trimmed) return false;
+  const lastLine = trimmed.split("\n").pop() ?? "";
+  return lastLine.includes(MEMORY_FOOTER_MARKER);
+}
+
+function ensureMemoryFooter(text: string): string {
+  if (hasMemoryFooter(text)) return text;
+  const trimmed = text.trimEnd();
+  if (!trimmed) return DEFAULT_MEMORY_FOOTER;
+  return `${trimmed}\n\n${DEFAULT_MEMORY_FOOTER}`;
+}
+
+// --- MarkdownV2 Sanitizer ---
+// Characters that are special in MarkdownV2 and need escaping in regular text.
+// Formatting delimiters (* _ ~) are intentionally excluded — the LLM handles those.
+const MD2_ESCAPE = new Set(".!+-=#{}()[]|>".split(""));
+
+// Convert standard Markdown bold/italic to MarkdownV2 equivalents.
+// Claude writes **bold** and ***bold italic*** but MarkdownV2 uses *bold* and *_italic_*.
+function convertMarkdownBold(text: string): string {
+  // Preserve code blocks and inline code from conversion
+  const protected_: { placeholder: string; original: string }[] = [];
+  let idx = 0;
+  let result = text.replace(/```[\s\S]*?```|`[^`]+`/g, (match) => {
+    const placeholder = `\x00CODE${idx++}\x00`;
+    protected_.push({ placeholder, original: match });
+    return placeholder;
+  });
+  // ***text*** → *_text_* (bold italic)
+  result = result.replace(/\*{3}(.+?)\*{3}/g, "*_$1_*");
+  // **text** → *text* (bold)
+  result = result.replace(/\*{2}(.+?)\*{2}/g, "*$1*");
+  // Restore protected sections
+  for (const { placeholder, original } of protected_) {
+    result = result.replace(placeholder, original);
+  }
+  return result;
+}
+
+function sanitizeMarkdownV2(text: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    // Already escaped: pass through
+    if (text[i] === "\\" && i + 1 < len) {
+      out.push(text[i], text[i + 1]);
+      i += 2;
+      continue;
+    }
+
+    // Code block ```...```: pass through verbatim (no escaping inside)
+    if (text.startsWith("```", i)) {
+      const end = text.indexOf("```", i + 3);
+      if (end !== -1) {
+        out.push(text.slice(i, end + 3));
+        i = end + 3;
+        continue;
+      }
+    }
+
+    // Inline code `...`: pass through verbatim
+    if (text[i] === "`") {
+      const end = text.indexOf("`", i + 1);
+      if (end !== -1) {
+        out.push(text.slice(i, end + 1));
+        i = end + 1;
+        continue;
+      }
+    }
+
+    // Link [text](url): sanitize display text, leave URL alone
+    if (text[i] === "[") {
+      const closeBracket = text.indexOf("]", i + 1);
+      if (closeBracket !== -1 && text[closeBracket + 1] === "(") {
+        const closeParen = text.indexOf(")", closeBracket + 2);
+        if (closeParen !== -1) {
+          const display = text.slice(i + 1, closeBracket);
+          const url = text.slice(closeBracket + 2, closeParen);
+          out.push("[", sanitizeMarkdownV2(display), "](", url.replace(/([)\\])/g, "\\$1"), ")");
+          i = closeParen + 1;
+          continue;
+        }
+      }
+    }
+
+    // Blockquote > at line start: preserve
+    if (text[i] === ">" && (i === 0 || text[i - 1] === "\n")) {
+      out.push(">");
+      i++;
+      continue;
+    }
+
+    // Spoiler ||...||: preserve delimiters, sanitize content
+    if (text[i] === "|" && text[i + 1] === "|") {
+      const end = text.indexOf("||", i + 2);
+      if (end !== -1) {
+        const inner = text.slice(i + 2, end);
+        out.push("||", sanitizeMarkdownV2(inner), "||");
+        i = end + 2;
+        continue;
+      }
+    }
+
+    // Special chars that need escaping in regular text
+    if (MD2_ESCAPE.has(text[i])) {
+      out.push("\\", text[i]);
+      i++;
+      continue;
+    }
+
+    // Everything else (regular chars + formatting delimiters * _ ~): pass through
+    out.push(text[i]);
+    i++;
+  }
+
+  return out.join("");
 }
 
 const MAX_RETRIES = 3;
@@ -100,6 +224,12 @@ interface PinMessageArgs {
 // --- Telegram API helper with retries ---
 
 async function tg(method: string, body: Record<string, unknown>): Promise<unknown> {
+  // Convert standard Markdown bold → MarkdownV2 bold, then sanitize
+  if (body.parse_mode === "MarkdownV2") {
+    if (typeof body.text === "string") body = { ...body, text: sanitizeMarkdownV2(convertMarkdownBold(body.text)) };
+    if (typeof body.caption === "string") body = { ...body, caption: sanitizeMarkdownV2(convertMarkdownBold(body.caption)) };
+  }
+
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -167,6 +297,11 @@ async function tgUpload(
   fileField: string,
   filePath: string,
 ): Promise<unknown> {
+  // Sanitize MarkdownV2 caption before upload
+  if (fields.parse_mode === "MarkdownV2" && fields.caption) {
+    fields = { ...fields, caption: sanitizeMarkdownV2(convertMarkdownBold(fields.caption)) };
+  }
+
   const buildForm = (includeParseMode: boolean) => {
     const form = new FormData();
     for (const [k, v] of Object.entries(fields)) {
@@ -254,16 +389,17 @@ const server = new McpServer({
 
 server.tool(
   "send_message",
-  "Send a text message to a Telegram chat. Supports HTML formatting.",
+  "Send a text message to a Telegram chat. Supports MarkdownV2 formatting.",
   {
     chat_id: z.string().describe("Telegram chat ID"),
-    text: z.string().describe("Message text. Use HTML tags for formatting: <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>block</pre>, <a href='url'>link</a>. Plain text is fine too."),
-    parse_mode: z.enum(["HTML", "MarkdownV2", "Markdown"]).optional().describe("Parse mode (default: HTML)"),
+    text: z.string().describe("Message text. Use MarkdownV2 formatting: *bold*, _italic_, `code`, ```block```, [link](url). Escape special chars: _ * [ ] ( ) ~ ` > # + - = | { } . ! with backslash. Plain text is fine too."),
+    parse_mode: z.enum(["MarkdownV2", "HTML", "Markdown"]).optional().describe("Parse mode (default: MarkdownV2)"),
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup or ReplyKeyboardMarkup"),
   },
   safe(async ({ chat_id, text, parse_mode, reply_to_message_id, reply_markup }: SendMessageArgs) => {
-    const body: Record<string, unknown> = { chat_id, text, parse_mode: parse_mode ?? "HTML" };
+    const finalText = ensureMemoryFooter(text);
+    const body: Record<string, unknown> = { chat_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
     if (reply_markup) {
       try {
@@ -278,15 +414,17 @@ server.tool(
     try {
       mkdirSync(IPC_DIR, { recursive: true });
       const sentMsg = result as { message_id: number };
-      appendFileSync(
-        join(IPC_DIR, `${chat_id}.outbox.jsonl`),
-        JSON.stringify({
+      const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
           chat_id,
-          text,
+          text: finalText,
           reply_to_message_id,
           timestamp: Date.now(),
-        }) + "\n",
+        };
+      if (SESSION_ID) outboxEntry.session_id = SESSION_ID;
+      appendFileSync(
+        join(IPC_DIR, `${chat_id}.outbox.jsonl`),
+        JSON.stringify(outboxEntry) + "\n",
         "utf-8"
       );
     } catch {}
@@ -301,8 +439,8 @@ server.tool(
   {
     chat_id: z.string().describe("Telegram chat ID"),
     photo: z.string().describe("Photo URL, file_id, or absolute local file path"),
-    caption: z.string().optional().describe("Photo caption (HTML supported)"),
-    parse_mode: z.enum(["HTML", "MarkdownV2", "Markdown"]).optional().describe("Parse mode for caption (default: HTML)"),
+    caption: z.string().optional().describe("Photo caption (MarkdownV2 supported)"),
+    parse_mode: z.enum(["MarkdownV2", "HTML", "Markdown"]).optional().describe("Parse mode for caption (default: MarkdownV2)"),
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
   },
   safe(async ({ chat_id, photo, caption, parse_mode, reply_to_message_id }: SendPhotoArgs) => {
@@ -312,7 +450,7 @@ server.tool(
       const fields: Record<string, string | undefined> = {
         chat_id,
         caption,
-        parse_mode: parse_mode ?? (caption ? "HTML" : undefined),
+        parse_mode: parse_mode ?? (caption ? "MarkdownV2" : undefined),
       };
       if (reply_to_message_id) {
         fields.reply_parameters = JSON.stringify({ message_id: reply_to_message_id });
@@ -321,7 +459,7 @@ server.tool(
     } else {
       const body: Record<string, unknown> = { chat_id, photo };
       if (caption) body.caption = caption;
-      if (caption) body.parse_mode = parse_mode ?? "HTML";
+      if (caption) body.parse_mode = parse_mode ?? "MarkdownV2";
       if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
       result = await tg("sendPhoto", body);
     }
@@ -341,7 +479,8 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup"),
   },
   safe(async ({ chat_id, message_id, text, parse_mode, reply_markup }: EditMessageArgs) => {
-    const body: Record<string, unknown> = { chat_id, message_id, text, parse_mode: parse_mode ?? "HTML" };
+    const finalText = ensureMemoryFooter(text);
+    const body: Record<string, unknown> = { chat_id, message_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_markup) {
       try {
         body.reply_markup = JSON.parse(reply_markup);
@@ -438,9 +577,11 @@ server.tool(
   })
 );
 
-// --- ask_user IPC ---
+// --- IPC ---
 
 const IPC_DIR = process.env.LEO_IPC_DIR || "/tmp/leo-ipc";
+const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
+const SESSION_ID = process.env.LEO_SESSION_ID;
 
 interface AskUserArgs {
   chat_id: string;
@@ -457,25 +598,28 @@ server.tool(
     timeout_seconds: z.number().optional().describe("Max seconds to wait for reply (default: 300)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
+    const finalText = ensureMemoryFooter(question);
     // Send the question via Telegram
     const result = await tg("sendMessage", {
       chat_id,
-      text: question,
-      parse_mode: "HTML",
+      text: finalText,
+      parse_mode: "MarkdownV2",
     });
 
     // Log to outbox
     try {
       mkdirSync(IPC_DIR, { recursive: true });
       const sentMsg = result as { message_id: number };
-      appendFileSync(
-        join(IPC_DIR, `${chat_id}.outbox.jsonl`),
-        JSON.stringify({
+      const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
           chat_id,
-          text: question,
+          text: finalText,
           timestamp: Date.now(),
-        }) + "\n",
+        };
+      if (SESSION_ID) outboxEntry.session_id = SESSION_ID;
+      appendFileSync(
+        join(IPC_DIR, `${chat_id}.outbox.jsonl`),
+        JSON.stringify(outboxEntry) + "\n",
         "utf-8"
       );
     } catch {}
@@ -509,6 +653,49 @@ server.tool(
     // Timeout: clean up waiting marker
     try { unlinkSync(waitingFile); } catch {}
     return { content: [{ type: "text" as const, text: "[ask_user timeout: no reply received within " + (timeout_seconds ?? 300) + "s]" }] };
+  })
+);
+
+// --- dispatch_task ---
+
+interface DispatchTaskArgs {
+  chat_id: string;
+  description: string;
+  prompt: string;
+}
+
+server.tool(
+  "dispatch_task",
+  "Dispatch a long-running task to run in the background as a separate Claude process. Use for coding tasks, research, or anything that would take more than ~30 seconds. The background process has full workspace and MCP tool access and will report results directly via Telegram. Your current session is free to continue immediately.\n\nIMPORTANT: The background process has NO shared context with your current session. Include ALL necessary context in the prompt — file paths, requirements, constraints, chat_id for replies.",
+  {
+    chat_id: z.string().describe("Chat ID for the background process to report results to"),
+    description: z.string().describe("Short task description (shown in /tasks listing)"),
+    prompt: z.string().describe("Complete prompt for the background Claude process. Must be self-contained with all context needed."),
+  },
+  safe(async ({ chat_id, description, prompt }: DispatchTaskArgs) => {
+    const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    mkdirSync(TASKS_IPC_DIR, { recursive: true });
+
+    const taskFile = join(TASKS_IPC_DIR, `${id}.md`);
+    const safeDesc = description.replace(/["\n\r\\]/g, " ").trim();
+    const content = [
+      "---",
+      `chat_id: "${chat_id}"`,
+      `description: "${safeDesc}"`,
+      `dispatched_at: "${new Date().toISOString()}"`,
+      "---",
+      prompt,
+    ].join("\n");
+
+    writeFileSync(taskFile, content, "utf-8");
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ task_id: id, status: "dispatched", description }),
+      }],
+    };
   })
 );
 

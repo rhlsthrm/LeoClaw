@@ -2,16 +2,17 @@ node_modules/
 dist/
 config.json
 packages/*/node_modules
-packages/*/dist
 workspace/secrets/
-workspace/memory/
-workspace/tmp/
-workspace/crons/*
-!workspace/crons/example.md
 logs/
 *.db
-messages.json
-__pycache__/
-venv/
-.DS_Store
 .worktrees/
+
+# Runtime / temp
+messages.json
+sessions.json
+.crontab.tmp
+workspace/tmp/
+workspace/artifacts/*/output/
+workspace/artifacts/*/media/
+workspace/memory/buffer/
+workspace/.playwright-mcp/

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEYCHAIN_SERVICE="${LEO_KEYCHAIN_SERVICE:-leoclaw.telegram_bot_token}"
-KEYCHAIN_ACCOUNT="${LEO_KEYCHAIN_ACCOUNT:-$USER}"
+KEYCHAIN_ACCOUNT="${LEO_KEYCHAIN_ACCOUNT:-${USER:-${LOGNAME:-$(whoami)}}}"
 
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   TELEGRAM_BOT_TOKEN="$(security find-generic-password -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" -w)"

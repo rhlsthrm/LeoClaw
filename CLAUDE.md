@@ -4,30 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-LeoClaw — a minimal Telegram bridge to Claude Code. Grammy receives messages, spawns `claude -p` with the workspace as CWD, and Claude uses MCP tools to reply. No SDK, no API costs. ~380 lines of harness code; all intelligence lives in the workspace.
+LeoClaw — a minimal Telegram bridge to Claude Code. Grammy receives messages, resolves session state (reply = resume, new = fresh), spawns `claude -p` with the workspace as CWD, and Claude uses MCP tools to reply. No SDK, no API costs. All intelligence lives in the workspace.
 
 ## Architecture
 
 ```
-Telegram → Grammy bot (src/index.ts) → spawns `claude -p --continue` → Claude loads workspace/CLAUDE.md + .mcp.json → uses Telegram MCP tools to reply
+Telegram → Grammy bot (src/index.ts) → resolve session → claude -p --resume/--session-id → Claude loads workspace/CLAUDE.md + .mcp.json → uses Telegram MCP tools to reply
 ```
 
 Two runtime paths:
-- **Messages**: User text → queued/deduped → Claude spawned with `--continue` (persistent session) → MCP reply (fallback: stdout sent to chat)
-- **Crons**: Markdown files in `workspace/crons/` → `croner` timers → fresh Claude session (no `--continue`) → MCP reply
+- **Messages**: User text → queued/deduped → session resolved (reply = `--resume`, new = `--session-id`) → Claude spawned (serialized per chat) → MCP reply (fallback: stdout sent to chat)
+- **Crons**: Markdown files in `workspace/crons/` → compiled to launchd agents → `scripts/run-cron.sh` → `claude -p` (stateless) → MCP reply
 
-Key in-memory state in the harness: `activeRuns` (Map of AbortControllers), `messageQueue` (buffer rapid messages), `processing` (Set preventing concurrent per-chat processing).
+Key in-memory state in the harness: `activeRuns` (Map of Sets of AbortControllers), `messageQueue` (buffer rapid messages), `activeTasks` (Map tracking background task processes), `chatLocks` (per-chat serialization), `chatActiveSession` (tracks active session per chat), `sessionStore` (message-to-session mappings, persisted to `sessions.json`).
 
 ## Project Layout
 
 - `src/index.ts` — The harness: Telegram bot, message queue, Claude process spawner
-- `src/cron.ts` — Cron module: parses markdown files, schedules with croner, serial execution queue
-- `packages/telegram-mcp/` — MCP server exposing 9 Telegram Bot API tools (send_message, send_photo, edit_message, delete_message, react, typing, edit_reply_markup, pin_message, ask_user)
+- `packages/telegram-mcp/` — MCP server exposing 10 Telegram Bot API tools (send_message, send_photo, edit_message, delete_message, react, typing, edit_reply_markup, pin_message, ask_user, dispatch_task)
 - `workspace/` — Claude's runtime workspace (CLAUDE.md identity, .mcp.json, skills, memory system, knowledge)
 - `workspace/crons/` — Cron job definitions (one `.md` file per job, YAML frontmatter + prompt)
+- `scripts/compile-crons.ts` — Compiler: reads cron .md files, converts TZ, generates launchd plist agents
+- `scripts/run-cron.sh` — Runner: executes a single cron job via `claude -p`
+- `scripts/run-leo-with-keychain.sh` — Keychain wrapper for the harness
 - `config.json` / `config.example.json` — Runtime config (env vars take precedence with `LEO_*` prefix)
-- `ops/launchd/` — macOS launchd service template
-- `scripts/` — Keychain wrapper and git hooks setup
 
 ## Commands
 
@@ -36,6 +36,10 @@ Key in-memory state in the harness: `activeRuns` (Map of AbortControllers), `mes
 pnpm dev                     # Watch mode (tsx)
 pnpm build                   # Compile harness (tsc)
 pnpm start                   # Run compiled harness
+
+# Crons
+pnpm compile:crons           # Compile .md files -> launchd agents
+pnpm compile:crons:dry       # Preview without installing
 
 # Telegram MCP package
 cd packages/telegram-mcp
@@ -61,13 +65,16 @@ Telegram token stored in macOS Keychain (`leoclaw.telegram_bot_token`), extracte
 
 - **`workspace/CLAUDE.md`** is Leo's runtime identity file (loaded by Claude when the bot runs). Do not confuse with this file.
 - **`workspace/.mcp.json`** configures MCP servers for the bot's Claude sessions, not for development.
-- The harness uses HTML parse_mode for Telegram messages (not MarkdownV2).
-- Claude is spawned as a child process via CLI (`claude -p`), not via any SDK.
+- The MCP server defaults to MarkdownV2 parse_mode for Telegram messages. The harness's own command responses (`/crons`, `/tasks`, etc.) still use HTML.
+- Claude is spawned as a child process via CLI (`claude -p` with `--resume` or `--session-id`), not via any SDK.
+- Messages are serialized per chat (one Claude process at a time). Crons and `dispatch_task` remain stateless.
 
 ## Conventions
 
 - TypeScript strict mode, ES2022 target
 - No abstractions — the harness is intentionally flat and minimal
-- "Code is config" — behavior changes go in workspace files (CLAUDE.md, skills), not harness code
+- "Code is config" — behavior changes go in workspace files (CLAUDE.md, rules, skills), not harness code
+- Behavioral rules live in `workspace/.claude/rules/` (auto-loaded by Claude Code at session start)
 - Skills live in `workspace/.claude/skills/<name>/SKILL.md`
-- Memory system: daily notes in `workspace/memory/YYYY-MM-DD.md`, knowledge in `workspace/knowledge/`
+- Memory system: pillar files in `workspace/memory/pillars/`, daily buffer in `workspace/memory/buffer/`
+- Session state: `sessions.json` maps message IDs to Claude session IDs (7-day TTL)
