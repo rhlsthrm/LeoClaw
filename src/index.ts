@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, renameS
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv } from "./utils.js";
 
 
 // --- Types ---
@@ -60,25 +61,7 @@ const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MEMORY_FOOTER_MARKER = "📚";
 const DEFAULT_MEMORY_FOOTER = "📚 No memory used";
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function parseBooleanEnv(value: string | undefined): boolean | undefined {
-  if (!value) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "off"].includes(normalized)) return false;
-  return undefined;
-}
-
-function parseAllowedUsersEnv(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
+// escapeHtml, parseBooleanEnv, parseAllowedUsersEnv imported from ./utils.ts
 
 function hasMemoryFooter(text: string): boolean {
   const trimmed = text.trimEnd();
