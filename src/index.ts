@@ -366,6 +366,22 @@ const chatActiveSession = new Map<string, string>();
 const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const activeTasks = new Map<string, { description: string; chatId: string; startedAt: number }>();
 
+/** Build a safe child process env that excludes secrets. */
+function buildChildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const ENV_ALLOWLIST = [
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL",
+    "TERM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+    "NODE_PATH", "NODE_OPTIONS",
+    "LEO_IPC_DIR", "LEO_WORKSPACE",
+    "AGENT_BROWSER_PROFILE",
+  ];
+  const env: Record<string, string> = {};
+  for (const key of ENV_ALLOWLIST) {
+    if (process.env[key]) env[key] = process.env[key]!;
+  }
+  return { ...env, ...extra };
+}
+
 function scheduleProcessing(chatId: string, ctx: Context): void {
   const existing = debounceTimers.get(chatId);
   if (existing) clearTimeout(existing);
@@ -836,7 +852,7 @@ function spawnTask(taskId: string, chatId: string, description: string, prompt: 
   const proc = spawn(CLAUDE_PATH, args, {
     cwd: WORKSPACE,
     signal: controller.signal,
-    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli", LEO_SESSION_ID: taskSessionId },
+    env: buildChildEnv({ CLAUDE_CODE_ENTRYPOINT: "cli", LEO_SESSION_ID: taskSessionId }),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -940,7 +956,7 @@ function runClaude(
     const proc: ChildProcess = spawn(CLAUDE_PATH, args, {
       cwd: WORKSPACE,
       signal: controller.signal,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
+      env: buildChildEnv({ CLAUDE_CODE_ENTRYPOINT: "cli" }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
