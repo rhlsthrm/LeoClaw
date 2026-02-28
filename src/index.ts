@@ -802,6 +802,14 @@ function processTaskFile(filename: string): void {
     }
 
     const chatId = chatIdMatch[1];
+
+    // R8: Validate task chat_id against ALLOWED_USERS
+    if (!ALLOWED_USERS.has(chatId)) {
+      console.error(`[tasks] rejected: ${filename} — chat_id "${chatId}" not in ALLOWED_USERS`);
+      unlinkSync(taskFile);
+      return;
+    }
+
     const description = descMatch?.[1] || "unnamed task";
     const taskId = filename.replace(".md", "");
 
@@ -844,7 +852,7 @@ function spawnTask(taskId: string, chatId: string, description: string, prompt: 
 
   const args = ["-p", fullPrompt, "--output-format", "text", "--model", CLAUDE_MODEL, "--session-id", taskSessionId, "--append-system-prompt", taskSystemPrompt];
   if (CLAUDE_FALLBACK_MODEL !== CLAUDE_MODEL) args.push("--fallback-model", CLAUDE_FALLBACK_MODEL);
-  if (DANGEROUSLY_SKIP_PERMISSIONS) args.push("--dangerously-skip-permissions");
+  // R8: Never propagate skip-permissions to task processes spawned via IPC
 
   const logDir = join(WORKSPACE, "tmp", "task-logs");
   mkdirSync(logDir, { recursive: true });
