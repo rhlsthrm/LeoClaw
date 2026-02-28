@@ -33,6 +33,29 @@ def validate_save_path(path: str) -> str:
     )
 
 
+# --- Security: recipient validation ---
+
+_allowed_domains_raw = os.environ.get("APPLE_MAIL_ALLOWED_RECIPIENT_DOMAINS", "")
+ALLOWED_RECIPIENT_DOMAINS = [d.strip().lower() for d in _allowed_domains_raw.split(",") if d.strip()] if _allowed_domains_raw else []
+
+
+def validate_recipients(*address_lists: str | None) -> str | None:
+    """Validate that all email recipients are in allowed domains. Returns error string or None."""
+    if not ALLOWED_RECIPIENT_DOMAINS:
+        return None  # No allowlist configured — allow all (backwards compatible)
+    for addr_list in address_lists:
+        if not addr_list:
+            continue
+        for addr in addr_list.split(","):
+            addr = addr.strip()
+            if not addr:
+                continue
+            domain = addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
+            if domain not in ALLOWED_RECIPIENT_DOMAINS:
+                return f"Recipient '{addr}' not in allowed domains: {', '.join(ALLOWED_RECIPIENT_DOMAINS)}"
+    return None
+
+
 def inject_preferences(func):
     """Decorator that appends user preferences to tool docstrings"""
     if USER_PREFERENCES:

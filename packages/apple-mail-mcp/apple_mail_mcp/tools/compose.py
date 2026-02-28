@@ -3,7 +3,7 @@
 from typing import Optional
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script, validate_recipients
 
 
 @mcp.tool()
@@ -32,6 +32,11 @@ def reply_to_email(
     Returns:
         Confirmation message with details of the reply sent or saved draft
     """
+
+    # Validate recipients against domain allowlist
+    recipient_err = validate_recipients(cc, bcc)
+    if recipient_err:
+        return f"Blocked: {recipient_err}"
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
@@ -206,6 +211,11 @@ def compose_email(
         Confirmation message with details of the sent email
     """
 
+    # Validate recipients against domain allowlist
+    recipient_err = validate_recipients(to, cc, bcc)
+    if recipient_err:
+        return f"Blocked: {recipient_err}"
+
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
     escaped_subject = escape_applescript(subject)
@@ -326,6 +336,11 @@ def forward_email(
     Returns:
         Confirmation message with details of forwarded email
     """
+
+    # Validate recipients against domain allowlist
+    recipient_err = validate_recipients(to, cc, bcc)
+    if recipient_err:
+        return f"Blocked: {recipient_err}"
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)
