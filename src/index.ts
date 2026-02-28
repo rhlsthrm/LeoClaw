@@ -17,7 +17,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv } from "./utils.js";
+import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv, buildChildEnv, sanitizeCallbackData, getIpcDir, parseTaskChatId } from "./utils.js";
 
 
 // --- Types ---
@@ -653,8 +653,9 @@ bot.on("callback_query:data", async (ctx) => {
     // Expired/missing cache: fall through to normal callback flow
   }
 
-  // Format as synthetic prompt (not stored in message store, callbacks are ephemeral)
-  const text = `[callback_query]\ncallback_data: ${data}\norigin_message_id: ${originMessageId ?? "unknown"}`;
+  // Format as synthetic prompt — sanitize newlines to prevent prompt structure injection
+  const safeData = sanitizeCallbackData(data);
+  const text = `[callback_query]\ncallback_data: ${safeData}\norigin_message_id: ${originMessageId ?? "unknown"}`;
 
   // Skip debounce — buttons need fast response
   if (!messageQueue.has(chatId)) messageQueue.set(chatId, []);
@@ -794,7 +795,7 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
 // --- Async Tasks ---
 
 function watchTasksDir(): void {
-  mkdirSync(TASKS_IPC_DIR, { recursive: true });
+  mkdirSync(TASKS_IPC_DIR, { recursive: true, mode: 0o700 });
 
   // Clean up orphaned .running files from previous harness instance
   for (const file of readdirSync(TASKS_IPC_DIR)) {

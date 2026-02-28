@@ -496,7 +496,7 @@ server.tool(
 
     // Log to outbox so harness can track Leo's messages
     try {
-      mkdirSync(IPC_DIR, { recursive: true });
+      mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
       const sentMsg = result as { message_id: number };
       const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
@@ -703,7 +703,7 @@ server.tool(
   {
     chat_id: z.string().describe("Telegram chat ID"),
     question: z.string().describe("The question to ask the user"),
-    timeout_seconds: z.number().optional().describe("Max seconds to wait for reply (default: 300)"),
+    timeout_seconds: z.number().max(600).optional().describe("Max seconds to wait for reply (default: 300, max: 600)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
     validateChatId(chat_id);
@@ -717,7 +717,7 @@ server.tool(
 
     // Log to outbox
     try {
-      mkdirSync(IPC_DIR, { recursive: true });
+      mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
       const sentMsg = result as { message_id: number };
       const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
@@ -734,7 +734,7 @@ server.tool(
     } catch {}
 
     // Write waiting marker so harness knows to route next reply to IPC
-    mkdirSync(IPC_DIR, { recursive: true });
+    mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
     const waitingFile = join(IPC_DIR, `${chat_id}.waiting`);
     const replyFile = join(IPC_DIR, `${chat_id}.reply`);
 
@@ -797,7 +797,7 @@ server.tool(
 
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    mkdirSync(TASKS_IPC_DIR, { recursive: true });
+    mkdirSync(TASKS_IPC_DIR, { recursive: true, mode: 0o700 });
 
     const taskFile = join(TASKS_IPC_DIR, `${id}.md`);
     const safeDesc = description.replace(/["\n\r\\]/g, " ").trim();
