@@ -3,11 +3,12 @@
 from typing import Optional, List, Dict, Any
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script, email_content_boundary
 
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def list_inbox_emails(
     account: Optional[str] = None,
     max_emails: int = 0,
@@ -173,6 +174,7 @@ def list_accounts() -> List[str]:
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_recent_emails(
     account: str,
     count: int = 10,
@@ -358,6 +360,7 @@ def list_mailboxes(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_inbox_overview() -> str:
     """
     Get a comprehensive overview of your email inbox status across all accounts.

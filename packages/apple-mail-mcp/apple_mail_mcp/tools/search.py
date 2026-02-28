@@ -3,11 +3,12 @@
 from typing import Optional, List, Dict, Any
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, LOWERCASE_HANDLER
+from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, LOWERCASE_HANDLER, email_content_boundary
 
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_email_with_content(
     account: str,
     subject_keyword: str,
@@ -145,6 +146,7 @@ def get_email_with_content(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def search_emails(
     account: str,
     mailbox: str = "INBOX",
@@ -328,6 +330,7 @@ def search_emails(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def search_by_sender(
     sender: str,
     account: Optional[str] = None,
@@ -524,6 +527,7 @@ def search_by_sender(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def search_email_content(
     account: str,
     search_text: str,
@@ -637,6 +641,7 @@ def search_email_content(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_newsletters(
     account: Optional[str] = None,
     days_back: int = 7,
@@ -764,6 +769,7 @@ def get_newsletters(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_recent_from_sender(
     sender: str,
     account: Optional[str] = None,
@@ -952,6 +958,7 @@ def get_recent_from_sender(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def get_email_thread(
     account: str,
     subject_keyword: str,
@@ -1099,6 +1106,7 @@ def get_email_thread(
 
 @mcp.tool()
 @inject_preferences
+@email_content_boundary
 def search_all_accounts(
     subject_keyword: Optional[str] = None,
     sender: Optional[str] = None,
