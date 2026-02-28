@@ -25,6 +25,21 @@ if (!BOT_TOKEN) {
 
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+// --- Security: chat_id validation ---
+
+const ALLOWED_CHAT_IDS = process.env.LEO_ALLOWED_CHAT_IDS
+  ? new Set(process.env.LEO_ALLOWED_CHAT_IDS.split(",").map(s => s.trim()).filter(Boolean))
+  : null;
+
+const CHAT_ID_REGEX = /^-?\d+$/;
+
+/** Validate chat_id: must be numeric and (if configured) in the allowlist. */
+function validateChatId(chatId: string): string | null {
+  if (!CHAT_ID_REGEX.test(chatId)) return `Invalid chat_id: must be numeric, got "${chatId}"`;
+  if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.has(chatId)) return `Unauthorized chat_id: ${chatId}`;
+  return null;
+}
+
 // --- Helpers ---
 
 type ParseMode = "HTML" | "MarkdownV2" | "Markdown";
@@ -398,6 +413,8 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup or ReplyKeyboardMarkup"),
   },
   safe(async ({ chat_id, text, parse_mode, reply_to_message_id, reply_markup }: SendMessageArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
@@ -444,6 +461,8 @@ server.tool(
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
   },
   safe(async ({ chat_id, photo, caption, parse_mode, reply_to_message_id }: SendPhotoArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     let result: unknown;
 
     if (isLocalFile(photo)) {
@@ -479,6 +498,8 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup"),
   },
   safe(async ({ chat_id, message_id, text, parse_mode, reply_markup }: EditMessageArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, message_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_markup) {
@@ -501,6 +522,8 @@ server.tool(
     message_id: z.number().describe("Message ID to delete"),
   },
   safe(async ({ chat_id, message_id }: DeleteMessageArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const result = await tg("deleteMessage", { chat_id, message_id });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   })
@@ -515,6 +538,8 @@ server.tool(
     emoji: z.string().describe("Emoji to react with (e.g. 👍, 🔥, ❤️)"),
   },
   safe(async ({ chat_id, message_id, emoji }: ReactArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const result = await tg("setMessageReaction", {
       chat_id, message_id,
       reaction: [{ type: "emoji", emoji }],
@@ -530,6 +555,8 @@ server.tool(
     chat_id: z.string().describe("Telegram chat ID"),
   },
   safe(async ({ chat_id }: TypingArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     await tg("sendChatAction", { chat_id, action: "typing" });
     return { content: [{ type: "text" as const, text: "ok" }] };
   })
@@ -544,6 +571,8 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup, or omit to remove buttons"),
   },
   safe(async ({ chat_id, message_id, reply_markup }: EditReplyMarkupArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const body: Record<string, unknown> = { chat_id, message_id };
     if (reply_markup) {
       try {
@@ -568,6 +597,8 @@ server.tool(
     disable_notification: z.boolean().optional().describe("Pin silently (default: true)"),
   },
   safe(async ({ chat_id, message_id, disable_notification }: PinMessageArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const result = await tg("pinChatMessage", {
       chat_id,
       message_id,
@@ -598,6 +629,8 @@ server.tool(
     timeout_seconds: z.number().optional().describe("Max seconds to wait for reply (default: 300)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const finalText = ensureMemoryFooter(question);
     // Send the question via Telegram
     const result = await tg("sendMessage", {
@@ -673,6 +706,8 @@ server.tool(
     prompt: z.string().describe("Complete prompt for the background Claude process. Must be self-contained with all context needed."),
   },
   safe(async ({ chat_id, description, prompt }: DispatchTaskArgs) => {
+    const chatErr = validateChatId(chat_id);
+    if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     mkdirSync(TASKS_IPC_DIR, { recursive: true });
