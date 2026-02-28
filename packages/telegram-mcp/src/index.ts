@@ -32,6 +32,10 @@ const ALLOWED_CHAT_IDS = process.env.LEO_ALLOWED_CHAT_IDS
   ? new Set(process.env.LEO_ALLOWED_CHAT_IDS.split(",").map(s => s.trim()).filter(Boolean))
   : null;
 
+if (!ALLOWED_CHAT_IDS) {
+  console.error("[security] WARNING: LEO_ALLOWED_CHAT_IDS is not set — MCP tools will accept any numeric chat_id. Set this to restrict outbound messages to authorized chats.");
+}
+
 const CHAT_ID_REGEX = /^-?\d+$/;
 
 /** Validate chat_id: must be numeric and (if configured) in the allowlist. */
@@ -329,7 +333,7 @@ server.tool(
 
     // Log to outbox so harness can track Leo's messages
     try {
-      mkdirSync(IPC_DIR, { recursive: true });
+      mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
       const sentMsg = result as { message_id: number };
       const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
@@ -510,7 +514,7 @@ server.tool(
 
 // --- IPC ---
 
-const IPC_DIR = process.env.LEO_IPC_DIR || (process.env.HOME ? `${process.env.HOME}/.leoclaw/ipc` : "/tmp/leo-ipc");
+const IPC_DIR = process.env.LEO_IPC_DIR || join(process.env.HOME || "/tmp", ".leoclaw", "ipc");
 const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const SESSION_ID = process.env.LEO_SESSION_ID;
 
@@ -526,7 +530,7 @@ server.tool(
   {
     chat_id: z.string().describe("Telegram chat ID"),
     question: z.string().describe("The question to ask the user"),
-    timeout_seconds: z.number().optional().describe("Max seconds to wait for reply (default: 300)"),
+    timeout_seconds: z.number().max(600).optional().describe("Max seconds to wait for reply (default: 300, max: 600)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
     const chatErr = validateChatId(chat_id);
@@ -541,7 +545,7 @@ server.tool(
 
     // Log to outbox
     try {
-      mkdirSync(IPC_DIR, { recursive: true });
+      mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
       const sentMsg = result as { message_id: number };
       const outboxEntry: Record<string, unknown> = {
           message_id: sentMsg.message_id,
@@ -558,7 +562,7 @@ server.tool(
     } catch {}
 
     // Write waiting marker so harness knows to route next reply to IPC
-    mkdirSync(IPC_DIR, { recursive: true });
+    mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
     const waitingFile = join(IPC_DIR, `${chat_id}.waiting`);
     const replyFile = join(IPC_DIR, `${chat_id}.reply`);
 
@@ -610,7 +614,7 @@ server.tool(
     if (chatErr) return { content: [{ type: "text" as const, text: chatErr }], isError: true };
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    mkdirSync(TASKS_IPC_DIR, { recursive: true });
+    mkdirSync(TASKS_IPC_DIR, { recursive: true, mode: 0o700 });
 
     const taskFile = join(TASKS_IPC_DIR, `${id}.md`);
     const safeDesc = description.replace(/["\n\r\\]/g, " ").trim();

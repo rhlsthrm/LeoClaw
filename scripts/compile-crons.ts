@@ -25,6 +25,16 @@ const MARKER_END = "# END LEOCLAW CRONS";
 
 const dryRun = process.argv.includes("--dry-run");
 
+// Load config.json for skip-permissions setting (env var takes precedence)
+let configSkipPermissions = false;
+try {
+  const cfg = JSON.parse(readFileSync(join(ROOT, "config.json"), "utf-8"));
+  configSkipPermissions = cfg.dangerouslySkipPermissions === true;
+} catch {}
+const SKIP_PERMISSIONS = process.env.LEO_DANGEROUSLY_SKIP_PERMISSIONS
+  ? process.env.LEO_DANGEROUSLY_SKIP_PERMISSIONS === "true"
+  : configSkipPermissions;
+
 // --- Types ---
 
 interface CronEntry {
@@ -326,7 +336,7 @@ ${calendarXml}
         <key>LEO_CLAUDE_PATH</key>
         <string>/opt/homebrew/bin/claude</string>
         <key>LEO_DANGEROUSLY_SKIP_PERMISSIONS</key>
-        <string>${process.env.LEO_DANGEROUSLY_SKIP_PERMISSIONS || "false"}</string>
+        <string>${SKIP_PERMISSIONS}</string>
     </dict>
 </dict>
 </plist>`;

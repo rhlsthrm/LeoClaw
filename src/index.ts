@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, renameS
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv } from "./utils.js";
+import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv, buildChildEnv } from "./utils.js";
 
 
 // --- Types ---
@@ -350,20 +350,7 @@ const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const activeTasks = new Map<string, { description: string; chatId: string; startedAt: number }>();
 
 /** Build a safe child process env that excludes secrets. */
-function buildChildEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
-  const ENV_ALLOWLIST = [
-    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL",
-    "TERM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-    "NODE_PATH", "NODE_OPTIONS",
-    "LEO_IPC_DIR", "LEO_WORKSPACE",
-    "AGENT_BROWSER_PROFILE",
-  ];
-  const env: Record<string, string> = {};
-  for (const key of ENV_ALLOWLIST) {
-    if (process.env[key]) env[key] = process.env[key]!;
-  }
-  return { ...env, ...extra };
-}
+// buildChildEnv imported from ./utils.js
 
 function scheduleProcessing(chatId: string, ctx: Context): void {
   const existing = debounceTimers.get(chatId);
@@ -590,8 +577,9 @@ bot.on("callback_query:data", async (ctx) => {
   // Ack immediately so Telegram clears the button spinner
   ctx.answerCallbackQuery().catch(() => {});
 
-  // Format as synthetic prompt (not stored in message store, callbacks are ephemeral)
-  const text = `[callback_query]\ncallback_data: ${data}\norigin_message_id: ${originMessageId ?? "unknown"}`;
+  // Format as synthetic prompt — sanitize newlines to prevent prompt structure injection
+  const safeData = data.replace(/[\n\r]/g, " ");
+  const text = `[callback_query]\ncallback_data: ${safeData}\norigin_message_id: ${originMessageId ?? "unknown"}`;
 
   // Skip debounce — buttons need fast response
   if (!messageQueue.has(chatId)) messageQueue.set(chatId, []);
@@ -730,7 +718,7 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
 // --- Async Tasks ---
 
 function watchTasksDir(): void {
-  mkdirSync(TASKS_IPC_DIR, { recursive: true });
+  mkdirSync(TASKS_IPC_DIR, { recursive: true, mode: 0o700 });
 
   // Clean up orphaned .running files from previous harness instance
   for (const file of readdirSync(TASKS_IPC_DIR)) {
