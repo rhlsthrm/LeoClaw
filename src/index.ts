@@ -340,14 +340,18 @@ async function transcribeVoice(fileUrl: string): Promise<string> {
 }
 
 // --- IPC (ask_user) ---
-const IPC_DIR = process.env.LEO_IPC_DIR || "/tmp/leo-ipc";
+const IPC_DIR = process.env.LEO_IPC_DIR || join(process.env.HOME || "/tmp", ".leoclaw", "ipc");
 
 function isWaitingForReply(chatId: string): boolean {
   return existsSync(join(IPC_DIR, `${chatId}.waiting`));
 }
 
+function ensureIpcDir(): void {
+  mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
+}
+
 function deliverReply(chatId: string, text: string): void {
-  mkdirSync(IPC_DIR, { recursive: true });
+  ensureIpcDir();
   writeFileSync(join(IPC_DIR, `${chatId}.reply`), text, "utf-8");
 }
 

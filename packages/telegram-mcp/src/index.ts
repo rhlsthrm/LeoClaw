@@ -579,7 +579,7 @@ server.tool(
 
 // --- IPC ---
 
-const IPC_DIR = process.env.LEO_IPC_DIR || "/tmp/leo-ipc";
+const IPC_DIR = process.env.LEO_IPC_DIR || (process.env.HOME ? `${process.env.HOME}/.leoclaw/ipc` : "/tmp/leo-ipc");
 const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const SESSION_ID = process.env.LEO_SESSION_ID;
 
