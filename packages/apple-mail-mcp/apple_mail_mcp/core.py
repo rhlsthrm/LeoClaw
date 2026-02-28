@@ -1,9 +1,36 @@
 """Core helpers: AppleScript execution, escaping, parsing, and preference injection."""
 
+import os
 import subprocess
 from typing import List, Dict, Any
 
 from apple_mail_mcp.server import USER_PREFERENCES
+
+# --- Security: path validation ---
+
+ALLOWED_SAVE_DIRS = [
+    os.path.expanduser("~/Desktop"),
+    os.path.expanduser("~/Downloads"),
+    os.path.expanduser("~/Documents"),
+]
+
+# Allow overriding via env var (comma-separated)
+_extra = os.environ.get("APPLE_MAIL_ALLOWED_SAVE_DIRS", "")
+if _extra:
+    ALLOWED_SAVE_DIRS.extend(os.path.expanduser(d.strip()) for d in _extra.split(",") if d.strip())
+
+
+def validate_save_path(path: str) -> str:
+    """Validate that a save path is within allowed directories. Returns the resolved path or raises ValueError."""
+    expanded = os.path.expanduser(path)
+    resolved = os.path.realpath(expanded)
+    for allowed in ALLOWED_SAVE_DIRS:
+        if resolved.startswith(os.path.realpath(allowed)):
+            return resolved
+    raise ValueError(
+        f"Save path '{path}' is outside allowed directories. "
+        f"Allowed: {', '.join(ALLOWED_SAVE_DIRS)}"
+    )
 
 
 def inject_preferences(func):

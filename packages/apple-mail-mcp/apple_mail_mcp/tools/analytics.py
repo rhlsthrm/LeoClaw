@@ -4,7 +4,7 @@ import os
 from typing import Optional, List, Dict, Any
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script, validate_save_path
 
 
 @mcp.tool()
@@ -392,8 +392,8 @@ def export_emails(
         Confirmation message with export location
     """
 
-    # Expand home directory
-    save_dir = os.path.expanduser(save_directory)
+    # Validate and expand save_directory — restricts to allowed directories
+    save_dir = validate_save_path(save_directory)
 
     # Escape all user inputs for AppleScript
     safe_account = escape_applescript(account)

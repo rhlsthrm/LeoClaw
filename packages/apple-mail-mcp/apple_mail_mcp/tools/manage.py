@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 from apple_mail_mcp.server import mcp
-from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script
+from apple_mail_mcp.core import inject_preferences, escape_applescript, run_applescript, inbox_mailbox_script, validate_save_path
 
 
 @mcp.tool()
@@ -132,8 +132,8 @@ def save_email_attachment(
         Confirmation message with save location
     """
 
-    # Expand tilde in save_path (POSIX file in AppleScript does not expand ~)
-    expanded_path = os.path.expanduser(save_path)
+    # Validate and expand save_path — restricts to allowed directories
+    expanded_path = validate_save_path(save_path)
 
     # Escape for AppleScript
     escaped_account = escape_applescript(account)
