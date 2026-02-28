@@ -326,7 +326,7 @@ ${calendarXml}
         <key>LEO_CLAUDE_PATH</key>
         <string>/opt/homebrew/bin/claude</string>
         <key>LEO_DANGEROUSLY_SKIP_PERMISSIONS</key>
-        <string>true</string>
+        <string>${process.env.LEO_DANGEROUSLY_SKIP_PERMISSIONS || "false"}</string>
     </dict>
 </dict>
 </plist>`;
