@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve } from "node:path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -51,8 +51,13 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 };
 
+const WORKSPACE_DIR = process.env.LEO_WORKSPACE || process.cwd();
+
 function isLocalFile(s: string): boolean {
-  return s.startsWith("/") && existsSync(s);
+  if (!s.startsWith("/") || !existsSync(s)) return false;
+  // Restrict to workspace directory to prevent arbitrary file exfiltration
+  const resolved = resolve(s);
+  return resolved.startsWith(resolve(WORKSPACE_DIR));
 }
 
 function sleep(ms: number): Promise<void> {
