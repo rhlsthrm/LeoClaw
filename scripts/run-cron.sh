@@ -64,6 +64,12 @@ if [[ -z "$CHAT_ID" ]]; then
   exit 1
 fi
 
+# R10: Validate chat_id is numeric (prevents path traversal and injection)
+if ! [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]]; then
+  echo "ERROR: Invalid chat_id (must be numeric): $CHAT_ID"
+  exit 1
+fi
+
 # Check enabled flag
 ENABLED=$(awk '
   /^---$/ { count++; next }
