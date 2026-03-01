@@ -110,7 +110,23 @@ echo "Running: ${CRON_NAME} (${#FULL_PROMPT} chars prompt)"
 cd "$WORKSPACE"
 START=$(date +%s)
 
-"$CLAUDE_PATH" "${CLAUDE_ARGS[@]}" || {
+# Restrict environment to only what Claude needs
+env -i \
+  PATH="$PATH" \
+  HOME="$HOME" \
+  USER="${USER:-}" \
+  LOGNAME="${LOGNAME:-}" \
+  SHELL="${SHELL:-}" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  LANG="${LANG:-}" \
+  TERM="${TERM:-}" \
+  TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+  LEO_IPC_DIR="${LEO_IPC_DIR:-}" \
+  LEO_SESSION_ID="$SESSION_ID" \
+  LEO_ALLOWED_CHAT_IDS="${LEO_ALLOWED_CHAT_IDS:-}" \
+  AGENT_BROWSER_PROFILE="$AGENT_BROWSER_PROFILE" \
+  CLAUDE_CODE_ENTRYPOINT="cli" \
+  "$CLAUDE_PATH" "${CLAUDE_ARGS[@]}" || {
   echo "ERROR: Claude exited with code $?"
 }
 

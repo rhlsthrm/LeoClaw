@@ -9,20 +9,20 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>/Users/YOUR_USER/leoclaw/scripts/run-leo-with-keychain.sh</string>
+    <string>/Users/YOUR_USER/dev/projects/leo/scripts/run-leo-with-keychain.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/YOUR_USER/leoclaw</string>
+  <string>/Users/YOUR_USER/dev/projects/leo</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>LEO_ALLOWED_USERS</key>
-    <string>YOUR_TELEGRAM_USER_ID</string>
+    <string>123456789</string>
     <key>LEO_WORKSPACE</key>
-    <string>/Users/YOUR_USER/leoclaw/workspace</string>
+    <string>/Users/YOUR_USER/dev/projects/leo/workspace</string>
     <key>LEO_CLAUDE_PATH</key>
     <string>/opt/homebrew/bin/claude</string>
     <key>LEO_KEYCHAIN_SERVICE</key>
@@ -37,8 +37,8 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/YOUR_USER/leoclaw/logs/stdout.log</string>
+  <string>/Users/YOUR_USER/dev/projects/leo/logs/stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/YOUR_USER/leoclaw/logs/stderr.log</string>
+  <string>/Users/YOUR_USER/dev/projects/leo/logs/stderr.log</string>
 </dict>
 </plist>

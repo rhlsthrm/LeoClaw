@@ -148,7 +148,7 @@ Pull glue code updates from upstream. Your personal stuff never leaves the priva
 ## How It Works
 
 1. **Sessions**: Reply to a bot message = `claude --resume` (picks up where it left off). New message = `claude --session-id` (fresh session). If resume fails, auto-retries as fresh.
-2. **MCP tools**: Claude replies via Telegram MCP tools (`send_message`, `edit_message`, `react`, etc.). Stdout is only used as fallback if no MCP reply was sent.
+2. **Stream-JSON**: Claude is spawned with `--output-format stream-json`. The harness parses NDJSON events in real-time, detecting MCP tool calls from `assistant` events and extracting cost/session metadata from `result` events. The `result` text is used as fallback if no MCP reply was sent.
 3. **Background tasks**: Claude can dispatch long-running work via `dispatch_task`. The harness watches an IPC directory, spawns a separate Claude process, and tracks it.
 4. **Memory**: Pillar-based system in `workspace/memory/`. Three-tier retrieval (pillar files, QMD search, Telegram search). Nightly synthesis cron keeps it clean.
 5. **Skills**: Standard `.claude/skills/` directory. Claude Code reads them automatically.

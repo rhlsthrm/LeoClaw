@@ -14,8 +14,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync, realpathSync } from "node:fs";
 import { join, extname } from "node:path";
+import { homedir } from "node:os";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -36,8 +37,42 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 };
 
-function isLocalFile(s: string): boolean {
-  return s.startsWith("/") && existsSync(s);
+// --- Chat ID validation ---
+const ALLOWED_CHAT_IDS: Set<string> | null = (() => {
+  const raw = process.env.LEO_ALLOWED_CHAT_IDS;
+  if (!raw) return null; // not set = no restriction (backwards compat)
+  const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return ids.length > 0 ? new Set(ids) : null;
+})();
+
+function validateChatId(chatId: string): void {
+  if (!/^-?\d+$/.test(chatId)) {
+    throw new Error(`Invalid chat_id: must be numeric, got "${chatId.slice(0, 20)}"`);
+  }
+  if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.has(chatId)) {
+    throw new Error(`Unauthorized chat_id: ${chatId}`);
+  }
+}
+
+// --- Local file access ---
+const WORKSPACE_DIR = process.env.LEO_WORKSPACE || join(homedir(), "leo", "workspace");
+
+function isAllowedLocalFile(filePath: string): boolean {
+  if (!filePath.startsWith("/") || !existsSync(filePath)) return false;
+  let resolved: string;
+  try {
+    resolved = realpathSync(filePath);
+  } catch {
+    return false;
+  }
+  let baseDir: string;
+  try {
+    baseDir = realpathSync(WORKSPACE_DIR);
+  } catch {
+    return false;
+  }
+  // Trailing slash prevents "/workspace-evil/" matching "/workspace"
+  return resolved === baseDir || resolved.startsWith(baseDir + "/");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -170,12 +205,20 @@ const MAX_RETRIES = 3;
 
 // --- Interfaces ---
 
+interface SuggestedAction {
+  type: "question" | "drilldown" | "action" | "nav";
+  label: string;
+  action?: string;  // for type: "action"
+  target?: string;  // for type: "nav"
+}
+
 interface SendMessageArgs {
   chat_id: string;
   text: string;
   parse_mode?: ParseMode;
   reply_to_message_id?: number;
   reply_markup?: string;
+  suggested_actions?: string;  // JSON array of SuggestedAction
 }
 
 interface SendPhotoArgs {
@@ -396,8 +439,12 @@ server.tool(
     parse_mode: z.enum(["MarkdownV2", "HTML", "Markdown"]).optional().describe("Parse mode (default: MarkdownV2)"),
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup or ReplyKeyboardMarkup"),
+    suggested_actions: z.string().optional().describe(
+      "JSON array of suggested follow-up actions. Each object: {type: 'question'|'drilldown'|'action'|'nav', label: string, action?: string, target?: string}. Max 3 items, labels max 40 chars. Questions/drilldowns become reply shortcuts. Actions/nav become callbacks."
+    ),
   },
-  safe(async ({ chat_id, text, parse_mode, reply_to_message_id, reply_markup }: SendMessageArgs) => {
+  safe(async ({ chat_id, text, parse_mode, reply_to_message_id, reply_markup, suggested_actions }: SendMessageArgs) => {
+    validateChatId(chat_id);
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
@@ -408,6 +455,43 @@ server.tool(
         return { content: [{ type: "text" as const, text: `Invalid reply_markup JSON: ${reply_markup.slice(0, 100)}` }], isError: true };
       }
     }
+    // Parse and attach suggested_actions as inline keyboard
+    if (suggested_actions) {
+      try {
+        const actions = JSON.parse(suggested_actions) as SuggestedAction[];
+        const valid = actions
+          .filter((a) => a.label && a.label.length <= 40 && ["question", "drilldown", "action", "nav"].includes(a.type))
+          .slice(0, 3);
+
+        if (valid.length > 0) {
+          const suggestButtons = valid.map((a, i) => {
+            let callbackData: string;
+            switch (a.type) {
+              case "question":
+              case "drilldown":
+                callbackData = `suggest:msg:${i}`;
+                break;
+              case "action":
+                callbackData = `suggest:action:${(a.action ?? "unknown").slice(0, 40)}`;
+                break;
+              case "nav":
+                callbackData = `suggest:nav:${(a.target ?? "unknown").slice(0, 40)}`;
+                break;
+            }
+            return { text: a.label, callback_data: callbackData };
+          });
+
+          // Merge with existing reply_markup or create new one (one button per row to avoid truncation)
+          const existingMarkup = body.reply_markup as { inline_keyboard?: Array<Array<unknown>> } | undefined;
+          const existingRows = existingMarkup?.inline_keyboard ?? [];
+          const suggestRows = suggestButtons.map((btn) => [btn]);
+          body.reply_markup = { inline_keyboard: [...existingRows, ...suggestRows] };
+        }
+      } catch {
+        // Invalid JSON: silently ignore, message still sends
+      }
+    }
+
     const result = await tg("sendMessage", body);
 
     // Log to outbox so harness can track Leo's messages
@@ -422,6 +506,13 @@ server.tool(
           timestamp: Date.now(),
         };
       if (SESSION_ID) outboxEntry.session_id = SESSION_ID;
+      if (suggested_actions) {
+        try {
+          outboxEntry.suggested_actions = JSON.parse(suggested_actions);
+        } catch {}
+      }
+      // Flag if message has any inline keyboard (manual or generated) so harness skips fallback
+      if (body.reply_markup) outboxEntry.has_reply_markup = true;
       appendFileSync(
         join(IPC_DIR, `${chat_id}.outbox.jsonl`),
         JSON.stringify(outboxEntry) + "\n",
@@ -444,9 +535,14 @@ server.tool(
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
   },
   safe(async ({ chat_id, photo, caption, parse_mode, reply_to_message_id }: SendPhotoArgs) => {
+    validateChatId(chat_id);
     let result: unknown;
 
-    if (isLocalFile(photo)) {
+    if (photo.startsWith("/")) {
+      // Local file path: must be within workspace
+      if (!isAllowedLocalFile(photo)) {
+        throw new Error(`Local file access denied: path must be within workspace. Got: ${photo.slice(0, 60)}`);
+      }
       const fields: Record<string, string | undefined> = {
         chat_id,
         caption,
@@ -457,6 +553,7 @@ server.tool(
       }
       result = await tgUpload("sendPhoto", fields, "photo", photo);
     } else {
+      // URL or file_id
       const body: Record<string, unknown> = { chat_id, photo };
       if (caption) body.caption = caption;
       if (caption) body.parse_mode = parse_mode ?? "MarkdownV2";
@@ -479,6 +576,7 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup"),
   },
   safe(async ({ chat_id, message_id, text, parse_mode, reply_markup }: EditMessageArgs) => {
+    validateChatId(chat_id);
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, message_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_markup) {
@@ -501,6 +599,7 @@ server.tool(
     message_id: z.number().describe("Message ID to delete"),
   },
   safe(async ({ chat_id, message_id }: DeleteMessageArgs) => {
+    validateChatId(chat_id);
     const result = await tg("deleteMessage", { chat_id, message_id });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   })
@@ -515,6 +614,7 @@ server.tool(
     emoji: z.string().describe("Emoji to react with (e.g. 👍, 🔥, ❤️)"),
   },
   safe(async ({ chat_id, message_id, emoji }: ReactArgs) => {
+    validateChatId(chat_id);
     const result = await tg("setMessageReaction", {
       chat_id, message_id,
       reaction: [{ type: "emoji", emoji }],
@@ -530,6 +630,7 @@ server.tool(
     chat_id: z.string().describe("Telegram chat ID"),
   },
   safe(async ({ chat_id }: TypingArgs) => {
+    validateChatId(chat_id);
     await tg("sendChatAction", { chat_id, action: "typing" });
     return { content: [{ type: "text" as const, text: "ok" }] };
   })
@@ -544,6 +645,7 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup, or omit to remove buttons"),
   },
   safe(async ({ chat_id, message_id, reply_markup }: EditReplyMarkupArgs) => {
+    validateChatId(chat_id);
     const body: Record<string, unknown> = { chat_id, message_id };
     if (reply_markup) {
       try {
@@ -568,6 +670,7 @@ server.tool(
     disable_notification: z.boolean().optional().describe("Pin silently (default: true)"),
   },
   safe(async ({ chat_id, message_id, disable_notification }: PinMessageArgs) => {
+    validateChatId(chat_id);
     const result = await tg("pinChatMessage", {
       chat_id,
       message_id,
@@ -579,9 +682,14 @@ server.tool(
 
 // --- IPC ---
 
-const IPC_DIR = process.env.LEO_IPC_DIR || "/tmp/leo-ipc";
+const IPC_DIR = process.env.LEO_IPC_DIR || join(homedir(), ".leoclaw", "ipc");
+mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
 const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const SESSION_ID = process.env.LEO_SESSION_ID;
+
+// Rate limit for dispatch_task
+const TASK_DISPATCH_LIMIT = 5;
+const taskDispatchTimestamps: number[] = [];
 
 interface AskUserArgs {
   chat_id: string;
@@ -598,6 +706,7 @@ server.tool(
     timeout_seconds: z.number().optional().describe("Max seconds to wait for reply (default: 300)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
+    validateChatId(chat_id);
     const finalText = ensureMemoryFooter(question);
     // Send the question via Telegram
     const result = await tg("sendMessage", {
@@ -673,6 +782,19 @@ server.tool(
     prompt: z.string().describe("Complete prompt for the background Claude process. Must be self-contained with all context needed."),
   },
   safe(async ({ chat_id, description, prompt }: DispatchTaskArgs) => {
+    validateChatId(chat_id);
+
+    // Rate limit: max 5 tasks per minute
+    const now = Date.now();
+    const oneMinuteAgo = now - 60_000;
+    while (taskDispatchTimestamps.length > 0 && taskDispatchTimestamps[0] < oneMinuteAgo) {
+      taskDispatchTimestamps.shift();
+    }
+    if (taskDispatchTimestamps.length >= TASK_DISPATCH_LIMIT) {
+      throw new Error(`Rate limited: max ${TASK_DISPATCH_LIMIT} tasks per minute`);
+    }
+    taskDispatchTimestamps.push(now);
+
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     mkdirSync(TASKS_IPC_DIR, { recursive: true });

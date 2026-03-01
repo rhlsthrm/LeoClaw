@@ -12,9 +12,10 @@
 
 import { Bot, BotError, Context } from "grammy";
 import { spawn, ChildProcess, execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync, watch, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync, watch, readdirSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 
@@ -125,6 +126,11 @@ if (!allowedUsers?.length) {
 
 const BOT_TOKEN = botToken;
 const ALLOWED_USERS = new Set(allowedUsers);
+
+// Ensure LEO_ALLOWED_CHAT_IDS is set for child processes (MCP chat_id validation)
+if (!process.env.LEO_ALLOWED_CHAT_IDS) {
+  process.env.LEO_ALLOWED_CHAT_IDS = [...ALLOWED_USERS].join(",");
+}
 const WORKSPACE = process.env.LEO_WORKSPACE || configFile.workspace || ROOT;
 const CLAUDE_PATH = process.env.LEO_CLAUDE_PATH || configFile.claudePath || "claude";
 const DANGEROUSLY_SKIP_PERMISSIONS =
@@ -133,6 +139,32 @@ const DANGEROUSLY_SKIP_PERMISSIONS =
   ?? false;
 const CLAUDE_MODEL = process.env.LEO_MODEL || configFile.model || "opus";
 const CLAUDE_FALLBACK_MODEL = process.env.LEO_FALLBACK_MODEL || configFile.fallbackModel || "sonnet";
+
+// Environment allowlist for child Claude processes.
+// Only these vars are passed to claude -p subprocesses (which spawn MCP servers).
+const CHILD_ENV_ALLOWLIST = [
+  // System
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM",
+  // XDG
+  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+  // Node
+  "NODE_PATH", "NODE_OPTIONS",
+  // LeoClaw (MCP server needs TELEGRAM_BOT_TOKEN and LEO_ALLOWED_CHAT_IDS)
+  "TELEGRAM_BOT_TOKEN", "LEO_IPC_DIR", "LEO_WORKSPACE", "LEO_SESSION_ID",
+  "LEO_ALLOWED_CHAT_IDS", "LEO_DANGEROUSLY_SKIP_PERMISSIONS",
+  // Browser
+  "AGENT_BROWSER_PROFILE",
+  // Claude
+  "CLAUDE_CODE_ENTRYPOINT",
+];
+
+function buildChildEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    if (process.env[key]) env[key] = process.env[key]!;
+  }
+  return { ...env, ...extra };
+}
 
 // --- Message Store ---
 function loadMessageStore(): Map<string, StoredMessage[]> {
@@ -261,6 +293,8 @@ function ingestOutbox(chatId: string, sessionId?: string): number {
         reply_to_message_id?: number;
         timestamp: number;
         session_id?: string;
+        suggested_actions?: Array<{ type: string; label: string; action?: string; target?: string }>;
+        has_reply_markup?: boolean;
       };
       const msgs = messageStore.get(chatId) ?? [];
       if (!msgs.some((m) => m.messageId === entry.message_id)) {
@@ -285,6 +319,12 @@ function ingestOutbox(chatId: string, sessionId?: string): number {
         }
         mapMessageToSession(chatId, entry.message_id, effectiveSessionId);
         mapped = true;
+      }
+      if (entry.suggested_actions?.length) {
+        cacheSuggestions(chatId, entry.message_id, entry.suggested_actions);
+      } else if (entry.has_reply_markup) {
+        // Sentinel: message already has buttons, block fallback from overwriting them
+        cacheSuggestions(chatId, entry.message_id, []);
       }
     }
     if (mapped) saveSessionStore();
@@ -340,7 +380,11 @@ async function transcribeVoice(fileUrl: string): Promise<string> {
 }
 
 // --- IPC (ask_user) ---
-const IPC_DIR = process.env.LEO_IPC_DIR || "/tmp/leo-ipc";
+const IPC_DIR = process.env.LEO_IPC_DIR || join(homedir(), ".leoclaw", "ipc");
+
+// Ensure IPC dirs exist with restricted permissions (owner-only)
+mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
+try { chmodSync(IPC_DIR, 0o700); } catch {}
 
 function isWaitingForReply(chatId: string): boolean {
   return existsSync(join(IPC_DIR, `${chatId}.waiting`));
@@ -361,6 +405,17 @@ const chatLocks = new Set<string>();
 const chatActiveSession = new Map<string, string>();
 const TASKS_IPC_DIR = join(IPC_DIR, "tasks");
 const activeTasks = new Map<string, { description: string; chatId: string; startedAt: number }>();
+const MAX_CONCURRENT_TASKS = 5;
+
+// Generative UI: cache suggested actions per message for button routing
+const suggestionsCache = new Map<string, Array<{ type: string; label: string; action?: string; target?: string }>>();
+const SUGGESTIONS_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function cacheSuggestions(chatId: string, messageId: number, actions: Array<{ type: string; label: string; action?: string; target?: string }>): void {
+  const key = `${chatId}:${messageId}`;
+  suggestionsCache.set(key, actions);
+  setTimeout(() => suggestionsCache.delete(key), SUGGESTIONS_TTL_MS);
+}
 
 function scheduleProcessing(chatId: string, ctx: Context): void {
   const existing = debounceTimers.get(chatId);
@@ -587,6 +642,34 @@ bot.on("callback_query:data", async (ctx) => {
   // Ack immediately so Telegram clears the button spinner
   ctx.answerCallbackQuery().catch(() => {});
 
+  // Remove buttons from the original message so they can't be clicked again
+  if (originMessageId) {
+    ctx.api
+      .editMessageReplyMarkup(chatId, originMessageId, {
+        reply_markup: { inline_keyboard: [] },
+      })
+      .catch(() => {});
+  }
+
+  // Route suggest:msg buttons as regular reply messages (session resumes automatically)
+  if (data.startsWith("suggest:msg:") && originMessageId) {
+    const index = parseInt(data.split(":")[2], 10);
+    const cached = suggestionsCache.get(`${chatId}:${originMessageId}`);
+    if (cached && cached[index]) {
+      const label = cached[index].label;
+      // Inject as a regular message reply — session resumes via reply-to mapping
+      if (!messageQueue.has(chatId)) messageQueue.set(chatId, []);
+      messageQueue.get(chatId)!.push({
+        text: label,
+        messageId: originMessageId,
+        replyTo: originMessageId,
+      });
+      processQueue(chatId, ctx);
+      return;
+    }
+    // Expired/missing cache: fall through to normal callback flow
+  }
+
   // Format as synthetic prompt (not stored in message store, callbacks are ephemeral)
   const text = `[callback_query]\ncallback_data: ${data}\norigin_message_id: ${originMessageId ?? "unknown"}`;
 
@@ -707,6 +790,7 @@ async function processQueue(chatId: string, ctx: Context): Promise<void> {
       mapMessageToSession(chatId, sentMsg.message_id, activeSessionId);
       saveSessionStore();
     }
+
   } catch (err: any) {
     clearInterval(typingInterval);
     ingestOutbox(chatId);
@@ -758,6 +842,11 @@ function processTaskFile(filename: string): void {
   const taskFile = join(TASKS_IPC_DIR, filename);
   if (!existsSync(taskFile)) return;
 
+  if (activeTasks.size >= MAX_CONCURRENT_TASKS) {
+    console.warn(`[tasks] rejected ${filename}: at capacity (${MAX_CONCURRENT_TASKS} tasks running)`);
+    return; // leave .md file for retry when a slot opens
+  }
+
   try {
     const content = readFileSync(taskFile, "utf-8");
 
@@ -784,6 +873,12 @@ function processTaskFile(filename: string): void {
     const chatId = chatIdMatch[1];
     const description = descMatch?.[1] || "unnamed task";
     const taskId = filename.replace(".md", "");
+
+    if (!ALLOWED_USERS.has(chatId)) {
+      console.error(`[tasks] rejected ${filename}: unauthorized chat_id ${chatId}`);
+      unlinkSync(taskFile);
+      return;
+    }
 
     // Rename to .running (acts as atomic lock — if another invocation already
     // picked this up, renameSync throws and we bail)
@@ -832,7 +927,7 @@ function spawnTask(taskId: string, chatId: string, description: string, prompt: 
   const proc = spawn(CLAUDE_PATH, args, {
     cwd: WORKSPACE,
     signal: controller.signal,
-    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli", LEO_SESSION_ID: taskSessionId },
+    env: buildChildEnv({ CLAUDE_CODE_ENTRYPOINT: "cli", LEO_SESSION_ID: taskSessionId }),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -901,6 +996,22 @@ function spawnTask(taskId: string, chatId: string, description: string, prompt: 
   console.log(`[tasks] spawned: ${taskId} — ${description} (pid: ${proc.pid})`);
 }
 
+// --- Stream-JSON event type (loose, tolerates unknown fields) ---
+interface StreamEvent {
+  type: string;
+  subtype?: string;
+  message?: {
+    content?: Array<{ type: string; name?: string; text?: string; [key: string]: unknown }>;
+    [key: string]: unknown;
+  };
+  result?: string;
+  total_cost_usd?: number;
+  duration_ms?: number;
+  num_turns?: number;
+  session_id?: string;
+  [key: string]: unknown;
+}
+
 // --- Claude CLI ---
 function runClaude(
   chatId: string,
@@ -916,6 +1027,7 @@ function runClaude(
     activeRuns.get(chatId)!.add(controller);
 
     function cleanup(): void {
+      if (sigkillTimer) { clearTimeout(sigkillTimer); sigkillTimer = null; }
       const controllers = activeRuns.get(chatId);
       if (controllers) {
         controllers.delete(controller);
@@ -923,7 +1035,7 @@ function runClaude(
       }
     }
 
-    const args = ["-p", prompt, "--output-format", "text", "--model", CLAUDE_MODEL];
+    const args = ["-p", prompt, "--verbose", "--output-format", "stream-json", "--model", CLAUDE_MODEL];
     if (CLAUDE_FALLBACK_MODEL !== CLAUDE_MODEL) args.push("--fallback-model", CLAUDE_FALLBACK_MODEL);
     if (session.type === "resume") {
       args.push("--resume", session.sessionId);
@@ -936,13 +1048,41 @@ function runClaude(
     const proc: ChildProcess = spawn(CLAUDE_PATH, args, {
       cwd: WORKSPACE,
       signal: controller.signal,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
+      env: buildChildEnv({ CLAUDE_CODE_ENTRYPOINT: "cli" }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let stdout = "";
+    let stdoutBuf = "";
     let stderr = "";
+    let resultText = "";
+    let assistantText = ""; // accumulate text blocks from assistant events as fallback
+    let mcpReplied = false;
     let settled = false;
+    let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function processStreamEvent(event: StreamEvent): void {
+      switch (event.type) {
+        case "assistant": {
+          const content = event.message?.content;
+          if (!Array.isArray(content)) break;
+          for (const block of content) {
+            if (block.type === "tool_use" && typeof block.name === "string" && block.name.startsWith("mcp__telegram__")) {
+              mcpReplied = true;
+            }
+            if (block.type === "text" && typeof block.text === "string") {
+              assistantText = block.text; // keep last text block (most recent response)
+            }
+          }
+          break;
+        }
+        case "result":
+          if (typeof event.result === "string") {
+            resultText = event.result;
+          }
+          console.log(`[claude] result: subtype=${event.subtype}, cost=$${event.total_cost_usd ?? "?"}, duration=${event.duration_ms ?? "?"}ms, turns=${event.num_turns ?? "?"}, session=${event.session_id ?? "?"}, resultLen=${typeof event.result === "string" ? event.result.length : `non-string:${typeof event.result}`}`);
+          break;
+      }
+    }
 
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -950,7 +1090,8 @@ function runClaude(
       console.error(`[claude] TIMEOUT after ${CLAUDE_TIMEOUT_MS / 1000}s for ${chatId}`);
       proc.kill("SIGTERM");
       // Give it 5s to exit gracefully, then force kill
-      setTimeout(() => {
+      sigkillTimer = setTimeout(() => {
+        sigkillTimer = null;
         try { proc.kill("SIGKILL"); } catch {}
       }, 5000);
       cleanup();
@@ -958,7 +1099,19 @@ function runClaude(
     }, CLAUDE_TIMEOUT_MS);
 
     proc.stdout?.on("data", (d: Buffer) => {
-      stdout += d.toString();
+      stdoutBuf += d.toString();
+      const lines = stdoutBuf.split("\n");
+      stdoutBuf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          processStreamEvent(JSON.parse(trimmed) as StreamEvent);
+        } catch {
+          console.warn(`[claude] unparseable stream line: ${trimmed.slice(0, 120)}`);
+        }
+      }
     });
     proc.stderr?.on("data", (d: Buffer) => {
       stderr += d.toString();
@@ -969,8 +1122,22 @@ function runClaude(
       if (settled) return;
       settled = true;
       cleanup();
-      if (code === 0 || stdout.trim()) {
-        resolve({ text: stdout.trim() || "(no output)", mcpReplied: false });
+
+      // Flush remaining buffer (split on newlines, not single-blob parse)
+      if (stdoutBuf.trim()) {
+        for (const line of stdoutBuf.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            processStreamEvent(JSON.parse(trimmed) as StreamEvent);
+          } catch { /* skip */ }
+        }
+      }
+
+      // Prefer result event text, fall back to last assistant text block, then "(no output)"
+      const text = resultText.trim() || assistantText.trim() || "(no output)";
+      if (code === 0 || text !== "(no output)") {
+        resolve({ text, mcpReplied });
       } else {
         reject(new Error(stderr.trim() || `claude exited with code ${code}`));
       }

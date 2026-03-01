@@ -13,7 +13,7 @@ Telegram → Grammy bot (src/index.ts) → resolve session → claude -p --resum
 ```
 
 Two runtime paths:
-- **Messages**: User text → queued/deduped → session resolved (reply = `--resume`, new = `--session-id`) → Claude spawned (serialized per chat) → MCP reply (fallback: stdout sent to chat)
+- **Messages**: User text → queued/deduped → session resolved (reply = `--resume`, new = `--session-id`) → Claude spawned with `--output-format stream-json` (serialized per chat) → NDJSON events parsed in real-time → MCP tool calls detected from `assistant` events → fallback: `result` event text sent to chat
 - **Crons**: Markdown files in `workspace/crons/` → compiled to launchd agents → `scripts/run-cron.sh` → `claude -p` (stateless) → MCP reply
 
 Key in-memory state in the harness: `activeRuns` (Map of Sets of AbortControllers), `messageQueue` (buffer rapid messages), `activeTasks` (Map tracking background task processes), `chatLocks` (per-chat serialization), `chatActiveSession` (tracks active session per chat), `sessionStore` (message-to-session mappings, persisted to `sessions.json`).
@@ -66,7 +66,7 @@ Telegram token stored in macOS Keychain (`leoclaw.telegram_bot_token`), extracte
 - **`workspace/CLAUDE.md`** is Leo's runtime identity file (loaded by Claude when the bot runs). Do not confuse with this file.
 - **`workspace/.mcp.json`** configures MCP servers for the bot's Claude sessions, not for development.
 - The MCP server defaults to MarkdownV2 parse_mode for Telegram messages. The harness's own command responses (`/crons`, `/tasks`, etc.) still use HTML.
-- Claude is spawned as a child process via CLI (`claude -p` with `--resume` or `--session-id`), not via any SDK.
+- Claude is spawned as a child process via CLI (`claude -p` with `--resume` or `--session-id` and `--output-format stream-json`), not via any SDK. The harness parses NDJSON events to detect MCP tool calls and extract cost/session metadata.
 - Messages are serialized per chat (one Claude process at a time). Crons and `dispatch_task` remain stateless.
 
 ## Conventions
