@@ -14,9 +14,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync, realpathSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join, extname } from "node:path";
 import { homedir } from "node:os";
+import { validateChatId, isLocalFile } from "./validation.js";
+import { sanitizeMarkdownV2, convertMarkdownBold, MD2_ESCAPE } from "./markdown.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -45,35 +47,15 @@ const ALLOWED_CHAT_IDS: Set<string> | null = (() => {
   return ids.length > 0 ? new Set(ids) : null;
 })();
 
-function validateChatId(chatId: string): void {
-  if (!/^-?\d+$/.test(chatId)) {
-    throw new Error(`Invalid chat_id: must be numeric, got "${chatId.slice(0, 20)}"`);
-  }
-  if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.has(chatId)) {
-    throw new Error(`Unauthorized chat_id: ${chatId}`);
-  }
+// validateChatId imported from ./validation.ts — takes (chatId, allowedChatIds?) for testability
+/** Thin wrapper: calls validateChatId and throws on error (works with safe() wrapper). */
+function requireValidChatId(chatId: string): void {
+  const err = validateChatId(chatId, ALLOWED_CHAT_IDS);
+  if (err) throw new Error(err);
 }
 
 // --- Local file access ---
 const WORKSPACE_DIR = process.env.LEO_WORKSPACE || join(homedir(), "leo", "workspace");
-
-function isAllowedLocalFile(filePath: string): boolean {
-  if (!filePath.startsWith("/") || !existsSync(filePath)) return false;
-  let resolved: string;
-  try {
-    resolved = realpathSync(filePath);
-  } catch {
-    return false;
-  }
-  let baseDir: string;
-  try {
-    baseDir = realpathSync(WORKSPACE_DIR);
-  } catch {
-    return false;
-  }
-  // Trailing slash prevents "/workspace-evil/" matching "/workspace"
-  return resolved === baseDir || resolved.startsWith(baseDir + "/");
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -94,112 +76,7 @@ function ensureMemoryFooter(text: string): string {
 }
 
 // --- MarkdownV2 Sanitizer ---
-// Characters that are special in MarkdownV2 and need escaping in regular text.
-// Formatting delimiters (* _ ~) are intentionally excluded — the LLM handles those.
-const MD2_ESCAPE = new Set(".!+-=#{}()[]|>".split(""));
-
-// Convert standard Markdown bold/italic to MarkdownV2 equivalents.
-// Claude writes **bold** and ***bold italic*** but MarkdownV2 uses *bold* and *_italic_*.
-function convertMarkdownBold(text: string): string {
-  // Preserve code blocks and inline code from conversion
-  const protected_: { placeholder: string; original: string }[] = [];
-  let idx = 0;
-  let result = text.replace(/```[\s\S]*?```|`[^`]+`/g, (match) => {
-    const placeholder = `\x00CODE${idx++}\x00`;
-    protected_.push({ placeholder, original: match });
-    return placeholder;
-  });
-  // ***text*** → *_text_* (bold italic)
-  result = result.replace(/\*{3}(.+?)\*{3}/g, "*_$1_*");
-  // **text** → *text* (bold)
-  result = result.replace(/\*{2}(.+?)\*{2}/g, "*$1*");
-  // Restore protected sections
-  for (const { placeholder, original } of protected_) {
-    result = result.replace(placeholder, original);
-  }
-  return result;
-}
-
-function sanitizeMarkdownV2(text: string): string {
-  const out: string[] = [];
-  let i = 0;
-  const len = text.length;
-
-  while (i < len) {
-    // Already escaped: pass through
-    if (text[i] === "\\" && i + 1 < len) {
-      out.push(text[i], text[i + 1]);
-      i += 2;
-      continue;
-    }
-
-    // Code block ```...```: pass through verbatim (no escaping inside)
-    if (text.startsWith("```", i)) {
-      const end = text.indexOf("```", i + 3);
-      if (end !== -1) {
-        out.push(text.slice(i, end + 3));
-        i = end + 3;
-        continue;
-      }
-    }
-
-    // Inline code `...`: pass through verbatim
-    if (text[i] === "`") {
-      const end = text.indexOf("`", i + 1);
-      if (end !== -1) {
-        out.push(text.slice(i, end + 1));
-        i = end + 1;
-        continue;
-      }
-    }
-
-    // Link [text](url): sanitize display text, leave URL alone
-    if (text[i] === "[") {
-      const closeBracket = text.indexOf("]", i + 1);
-      if (closeBracket !== -1 && text[closeBracket + 1] === "(") {
-        const closeParen = text.indexOf(")", closeBracket + 2);
-        if (closeParen !== -1) {
-          const display = text.slice(i + 1, closeBracket);
-          const url = text.slice(closeBracket + 2, closeParen);
-          out.push("[", sanitizeMarkdownV2(display), "](", url.replace(/([)\\])/g, "\\$1"), ")");
-          i = closeParen + 1;
-          continue;
-        }
-      }
-    }
-
-    // Blockquote > at line start: preserve
-    if (text[i] === ">" && (i === 0 || text[i - 1] === "\n")) {
-      out.push(">");
-      i++;
-      continue;
-    }
-
-    // Spoiler ||...||: preserve delimiters, sanitize content
-    if (text[i] === "|" && text[i + 1] === "|") {
-      const end = text.indexOf("||", i + 2);
-      if (end !== -1) {
-        const inner = text.slice(i + 2, end);
-        out.push("||", sanitizeMarkdownV2(inner), "||");
-        i = end + 2;
-        continue;
-      }
-    }
-
-    // Special chars that need escaping in regular text
-    if (MD2_ESCAPE.has(text[i])) {
-      out.push("\\", text[i]);
-      i++;
-      continue;
-    }
-
-    // Everything else (regular chars + formatting delimiters * _ ~): pass through
-    out.push(text[i]);
-    i++;
-  }
-
-  return out.join("");
-}
+// MD2_ESCAPE, convertMarkdownBold, sanitizeMarkdownV2 imported from ./markdown.ts
 
 const MAX_RETRIES = 3;
 
@@ -444,7 +321,7 @@ server.tool(
     ),
   },
   safe(async ({ chat_id, text, parse_mode, reply_to_message_id, reply_markup, suggested_actions }: SendMessageArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_to_message_id) body.reply_parameters = { message_id: reply_to_message_id };
@@ -535,12 +412,12 @@ server.tool(
     reply_to_message_id: z.coerce.number().optional().describe("Message ID to reply to"),
   },
   safe(async ({ chat_id, photo, caption, parse_mode, reply_to_message_id }: SendPhotoArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     let result: unknown;
 
     if (photo.startsWith("/")) {
       // Local file path: must be within workspace
-      if (!isAllowedLocalFile(photo)) {
+      if (!isLocalFile(photo, WORKSPACE_DIR)) {
         throw new Error(`Local file access denied: path must be within workspace. Got: ${photo.slice(0, 60)}`);
       }
       const fields: Record<string, string | undefined> = {
@@ -576,7 +453,7 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup"),
   },
   safe(async ({ chat_id, message_id, text, parse_mode, reply_markup }: EditMessageArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const finalText = ensureMemoryFooter(text);
     const body: Record<string, unknown> = { chat_id, message_id, text: finalText, parse_mode: parse_mode ?? "MarkdownV2" };
     if (reply_markup) {
@@ -599,7 +476,7 @@ server.tool(
     message_id: z.number().describe("Message ID to delete"),
   },
   safe(async ({ chat_id, message_id }: DeleteMessageArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const result = await tg("deleteMessage", { chat_id, message_id });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   })
@@ -614,7 +491,7 @@ server.tool(
     emoji: z.string().describe("Emoji to react with (e.g. 👍, 🔥, ❤️)"),
   },
   safe(async ({ chat_id, message_id, emoji }: ReactArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const result = await tg("setMessageReaction", {
       chat_id, message_id,
       reaction: [{ type: "emoji", emoji }],
@@ -630,7 +507,7 @@ server.tool(
     chat_id: z.string().describe("Telegram chat ID"),
   },
   safe(async ({ chat_id }: TypingArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     await tg("sendChatAction", { chat_id, action: "typing" });
     return { content: [{ type: "text" as const, text: "ok" }] };
   })
@@ -645,7 +522,7 @@ server.tool(
     reply_markup: z.string().optional().describe("JSON string of InlineKeyboardMarkup, or omit to remove buttons"),
   },
   safe(async ({ chat_id, message_id, reply_markup }: EditReplyMarkupArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const body: Record<string, unknown> = { chat_id, message_id };
     if (reply_markup) {
       try {
@@ -670,7 +547,7 @@ server.tool(
     disable_notification: z.boolean().optional().describe("Pin silently (default: true)"),
   },
   safe(async ({ chat_id, message_id, disable_notification }: PinMessageArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const result = await tg("pinChatMessage", {
       chat_id,
       message_id,
@@ -706,7 +583,7 @@ server.tool(
     timeout_seconds: z.number().max(600).optional().describe("Max seconds to wait for reply (default: 300, max: 600)"),
   },
   safe(async ({ chat_id, question, timeout_seconds }: AskUserArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
     const finalText = ensureMemoryFooter(question);
     // Send the question via Telegram
     const result = await tg("sendMessage", {
@@ -782,7 +659,7 @@ server.tool(
     prompt: z.string().describe("Complete prompt for the background Claude process. Must be self-contained with all context needed."),
   },
   safe(async ({ chat_id, description, prompt }: DispatchTaskArgs) => {
-    validateChatId(chat_id);
+    requireValidChatId(chat_id);
 
     // Rate limit: max 5 tasks per minute
     const now = Date.now();

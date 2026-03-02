@@ -52,6 +52,16 @@ describe("sanitizeMarkdownV2 — adversarial probing", () => {
     );
   });
 
+  it("INVARIANT: sanitizeMarkdownV2 is idempotent on plain text (double-sanitizing = single-sanitizing)", () => {
+    fc.assert(
+      fc.property(plainTextArb, (text) => {
+        const once = sanitizeMarkdownV2(text);
+        const twice = sanitizeMarkdownV2(once);
+        expect(twice).toBe(once);
+      }),
+    );
+  });
+
   it("INVARIANT: all MD2_ESCAPE chars escaped in plain text (no structural markers)", () => {
     fc.assert(
       fc.property(plainTextArb, (text) => {
@@ -167,6 +177,18 @@ describe("convertMarkdownBold — placeholder injection", () => {
     // Both code blocks preserved at their original positions
     expect(result).toContain("`first`");
     expect(result).toContain("`second`");
+  });
+
+  it("FIXED: UUID-format placeholder injection is also rejected", () => {
+    // Even if an attacker guesses the UUID format, a static UUID cannot match
+    // the dynamically-generated placeholder because randomUUID() is per-call.
+    const fakeUuid = "00000000-0000-0000-0000-000000000000";
+    const injection = `\x00${fakeUuid}\x00`;
+    const input = `${injection} \`real code\``;
+    const result = convertMarkdownBold(input);
+    expect(result).toContain("`real code`");
+    // The injected UUID placeholder passes through unchanged
+    expect(result).toContain(injection);
   });
 
   it("INVARIANT: output never contains null bytes when input has none", () => {

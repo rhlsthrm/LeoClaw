@@ -90,7 +90,8 @@ describe("parseBooleanEnv — DANGEROUSLY_SKIP_PERMISSIONS safety", () => {
   });
 
   it("PROBE: unicode whitespace around truthy values", () => {
-    // trim() only removes ASCII whitespace. Unicode spaces could sneak through.
+    // JS trim() strips WhiteSpace and LineTerminator productions from the ECMAScript grammar,
+    // which includes most Zs-category Unicode chars. So these all normalize to "true".
     const unicodeSpaces = [
       "\u00A0", // non-breaking space
       "\u2000", // en quad
@@ -99,18 +100,12 @@ describe("parseBooleanEnv — DANGEROUSLY_SKIP_PERMISSIONS safety", () => {
       "\uFEFF", // zero-width no-break space (BOM)
     ];
     for (const space of unicodeSpaces) {
-      const result = parseBooleanEnv(`${space}true${space}`);
-      // If trim() doesn't strip these, "true" with unicode padding returns undefined
-      // rather than true. This is arguably a bug (inconsistent with intent) but is
-      // SAFE for security: it's a false-negative (denies), not a false-positive.
-      // The dangerous direction would be returning true for non-truthy input.
-      if (result === true) {
-        // trim() stripped the unicode space — this means truthy
-        expect(true).toBe(true);
-      } else {
-        // trim() didn't strip it — returns undefined (safe direction)
-        expect(result).toBeUndefined();
-      }
+      const input = `${space}true${space}`;
+      const result = parseBooleanEnv(input);
+      // JS trim() strips these — the normalized value is "true" — so result must be true.
+      // The dangerous direction would be returning true for a non-truthy input; false
+      // negatives (returning undefined) would be safe but this case isn't one.
+      expect(result, `expected true for unicode-padded "true" (U+${space.codePointAt(0)?.toString(16).toUpperCase()})`).toBe(true);
     }
   });
 
@@ -187,19 +182,15 @@ describe("parseAllowedUsersEnv — authorization bypass probing", () => {
     );
   });
 
-  it("PROBE: only-commas and only-whitespace inputs return empty array or undefined", () => {
-    const degenerate = fc.constantFrom(
-      ",", ",,", ",,,", " , , , ", "\t,\n,", "  ",
-    );
-    fc.assert(
-      fc.property(degenerate, (input) => {
-        const result = parseAllowedUsersEnv(input);
-        if (!result) return; // undefined is fine
-        // Should be empty or contain no empty strings
-        for (const entry of result) {
-          expect(entry.length).toBeGreaterThan(0);
-        }
-      }),
-    );
+  it("PROBE: only-commas and only-whitespace inputs produce empty arrays (no phantom entries)", () => {
+    // These inputs should all produce empty arrays after split+trim+filter(Boolean).
+    // A mutation removing filter(Boolean) would cause these to return ["", ""] etc.
+    expect(parseAllowedUsersEnv(",")).toEqual([]);
+    expect(parseAllowedUsersEnv(",,")).toEqual([]);
+    expect(parseAllowedUsersEnv(",,,")).toEqual([]);
+    expect(parseAllowedUsersEnv(" , , , ")).toEqual([]);
+    expect(parseAllowedUsersEnv("\t,\n,")).toEqual([]);
+    // All-whitespace without commas: single entry after trim becomes empty, filtered out
+    expect(parseAllowedUsersEnv("  ")).toEqual([]);
   });
 });

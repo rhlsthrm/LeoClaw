@@ -17,7 +17,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv, buildChildEnv, sanitizeCallbackData, getIpcDir, parseTaskChatId } from "./utils.js";
+import { escapeHtml, parseBooleanEnv, parseAllowedUsersEnv, sanitizeCallbackData, getIpcDir, parseTaskChatId } from "./utils.js";
 
 
 // --- Types ---
@@ -363,7 +363,7 @@ async function transcribeVoice(fileUrl: string): Promise<string> {
 }
 
 // --- IPC (ask_user) ---
-const IPC_DIR = process.env.LEO_IPC_DIR || join(homedir(), ".leoclaw", "ipc");
+const IPC_DIR = getIpcDir();
 
 // Ensure IPC dirs exist with restricted permissions (owner-only)
 mkdirSync(IPC_DIR, { recursive: true, mode: 0o700 });
@@ -845,16 +845,15 @@ function processTaskFile(filename: string): void {
     const frontmatter = fmMatch[1];
     const promptBody = fmMatch[2];
 
-    const chatIdMatch = frontmatter.match(/^chat_id:\s*"?([^"\n]+)"?/m);
+    const chatId = parseTaskChatId(frontmatter);
     const descMatch = frontmatter.match(/^description:\s*"?(.*?)"?\s*$/m);
 
-    if (!chatIdMatch) {
+    if (chatId === null) {
       console.error(`[tasks] no chat_id in: ${filename}`);
       unlinkSync(taskFile);
       return;
     }
 
-    const chatId = chatIdMatch[1];
     const description = descMatch?.[1] || "unnamed task";
     const taskId = filename.replace(".md", "");
 
